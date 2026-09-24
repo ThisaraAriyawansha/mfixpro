@@ -1,63 +1,63 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/hooks/useAuth";
+import { siteUrl, siteName, siteDescription, ogImage } from "@/lib/site";
 
-const siteUrl = "https://nexora-pos.vercel.app";
-const ogImage = "/shop_logo/og.jpeg";
+const shortDescription =
+  "IT Repairs & Services - manage sales, repair jobs, inventory, customers, and warranty in one place.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "M-Fixpro POS",
-    template: "%s | M-Fixpro POS",
+    default: siteName,
+    template: `%s | ${siteName}`,
   },
-  description:
-    "M-Fixpro POS is a point of sale system built for computer and accessories stores, covering sales, inventory, customers, and warranty management.",
+  description: siteDescription,
   keywords: [
+    "M-Fixpro",
     "M-Fixpro POS",
+    "IT repairs",
+    "computer repair shop",
     "point of sale",
     "POS system",
-    "computer store POS",
+    "repair job management",
     "inventory management",
-    "sales management",
     "warranty management",
   ],
-  applicationName: "M-Fixpro POS",
+  applicationName: siteName,
   authors: [{ name: "M-Fixpro" }],
+  creator: "M-Fixpro",
+  publisher: "M-Fixpro",
   icons: {
     icon: "/shop_logo/1_M.png",
     apple: "/shop_logo/1_M.png",
   },
   alternates: {
-    canonical: siteUrl,
+    canonical: "/",
   },
   openGraph: {
     type: "website",
+    locale: "en_US",
     url: siteUrl,
-    siteName: "M-Fixpro POS",
-    title: "M-Fixpro POS",
-    description:
-      "Point of Sale System for Computer & Accessories - manage sales, inventory, customers, and warranty in one place.",
-    images: [
-      {
-        url: ogImage,
-        width: 890,
-        height: 1008,
-        alt: "M-Fixpro POS",
-      },
-    ],
+    siteName,
+    title: siteName,
+    description: shortDescription,
+    images: [{ ...ogImage, type: "image/jpeg" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "M-Fixpro POS",
-    description:
-      "Point of Sale System for Computer & Accessories — manage sales, inventory, customers, and warranty in one place.",
-    images: [ogImage],
+    title: siteName,
+    description: shortDescription,
+    images: [{ url: ogImage.url, alt: ogImage.alt }],
   },
   robots: {
     index: true,
     follow: true,
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#ffffff",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
