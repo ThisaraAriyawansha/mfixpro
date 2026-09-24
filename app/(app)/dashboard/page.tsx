@@ -8,7 +8,7 @@ import AccessRestricted from "@/components/ui/AccessRestricted";
 import { SALE_PAYMENT_METHOD_LABEL, salePaymentSplits } from "@/types";
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const PAYMENT_COLORS = ["#10233d", "#a1a1aa", "#e4e4e7", "#71717a"];
+const PAYMENT_COLORS = ["#e30613", "#0a0a0a", "#a1a1aa", "#e4e4e7"];
 
 function delta(current: number, previous: number): { pct: number; up: boolean } | null {
   if (previous === 0) return current > 0 ? { pct: 100, up: true } : null;

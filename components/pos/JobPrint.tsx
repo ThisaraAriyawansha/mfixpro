@@ -7,7 +7,7 @@ interface JobPrintProps {
   job: any;
 }
 
-const DEFAULT_SHOP: ShopSettings = { name: "T&N COMPUTERS", phone: "", email: "", address: "" };
+const DEFAULT_SHOP: ShopSettings = { name: "M-Fixpro", phone: "", email: "", address: "" };
 
 function formatDate(ts: any) {
   if (!ts) return "________";
@@ -46,7 +46,7 @@ export default function JobPrint({ job }: JobPrintProps) {
       <div className="job-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "4mm", paddingBottom: "3mm", borderBottom: "2px solid #000" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "3.5mm" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/shop_logo/6767467478-removebg-preview.png" alt={shop.name} style={{ height: "20mm", width: "auto", objectFit: "contain" }} />
+          <img src="/shop_logo/IMG_0112.PNG" alt={shop.name} style={{ height: "20mm", width: "auto", objectFit: "contain" }} />
           <div>
             <div className="job-title" style={{ fontFamily: "'Poppins', sans-serif", fontSize: "18pt", fontWeight: 700, letterSpacing: "-0.3px", lineHeight: 1.2 }}>{shop.name}</div>
             {shop.address && <div style={{ fontSize: "8pt", color: "#555", marginTop: "2px" }}>{shop.address}</div>}

@@ -62,7 +62,7 @@ export async function sendMail(
   html: string,
   attachments?: { filename: string; content: string; encoding?: string }[]
 ) {
-  const fromName = process.env.MAIL_FROM_NAME || "T&N COMPUTERS POS";
+  const fromName = process.env.MAIL_FROM_NAME || "M-Fixpro POS";
   const fromAddress = process.env.MAIL_FROM_ADDRESS || process.env.MAIL_USERNAME;
   await getTransporter().sendMail({
     from: `"${fromName}" <${fromAddress}>`,

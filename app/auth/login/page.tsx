@@ -155,25 +155,25 @@ export default function LoginPage() {
       <div
         className="hidden lg:flex w-1/2 flex-col items-center justify-center p-12 relative overflow-hidden"
         style={{
-          background: "linear-gradient(135deg, #fdfdfd 0%, #f3f4f8 55%, #eef1f7 100%)",
+          background: "linear-gradient(135deg, #ffffff 0%, #fafafa 55%, #fff1f1 100%)",
         }}
       >
         {/* dot grid texture */}
         <div
           className="absolute inset-0 opacity-[0.4]"
           style={{
-            backgroundImage: "radial-gradient(#d4d8e2 1px, transparent 1px)",
+            backgroundImage: "radial-gradient(#e4e4e7 1px, transparent 1px)",
             backgroundSize: "24px 24px",
           }}
         />
         {/* color wash blobs */}
-        <div className="absolute -top-24 -left-24 w-[380px] h-[380px] rounded-full bg-[#10233d]/10 blur-3xl" />
+        <div className="absolute -top-24 -left-24 w-[380px] h-[380px] rounded-full bg-black/10 blur-3xl" />
         <div className="absolute -bottom-24 -right-16 w-[420px] h-[420px] rounded-full bg-red-500/15 blur-3xl" />
 
-        <div className="relative w-[320px] h-[320px] rounded-full  shadow-[0_20px_60px_-15px_rgba(16,35,61,0.25)] flex items-center justify-center">
+        <div className="relative w-[320px] h-[320px] rounded-full  shadow-[0_20px_60px_-15px_rgba(10,10,10,0.25)] flex items-center justify-center">
           <Image
-            src="/shop_logo/login_page.png"
-            alt="T&N COMPUTERS"
+            src="/shop_logo/IMG_0112.PNG"
+            alt="M-Fixpro"
             width={360}
             height={360}
             className="w-[88%] h-auto drop-shadow-lg"
@@ -193,8 +193,8 @@ export default function LoginPage() {
           {/* Mobile logo */}
           <div className="lg:hidden mb-10 flex justify-center">
             <Image
-              src="/shop_logo/login_page.png"
-              alt="T&N COMPUTERS"
+              src="/shop_logo/IMG_0112.PNG"
+              alt="M-Fixpro"
               width={280}
               height={280}
               className="w-auto h-32"

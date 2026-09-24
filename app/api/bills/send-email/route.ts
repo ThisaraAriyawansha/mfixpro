@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const shopSnap = await db.collection("shopSettings").doc("main").get();
     const shopData = shopSnap.exists ? shopSnap.data() : null;
     const shop = {
-      name: shopData?.name || "T&N COMPUTERS",
+      name: shopData?.name || "M-Fixpro",
       phone: shopData?.phone || undefined,
       email: shopData?.email || undefined,
     };

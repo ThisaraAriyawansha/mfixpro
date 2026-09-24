@@ -1,6 +1,6 @@
 "use client";
 import Lottie from "lottie-react";
-import gamingAnimation from "@/public/loading/Untitled file.json";
+import gamingAnimation from "@/public/loading/7efsWEkgvO.json";
 import { useShopName } from "@/hooks/useShopName";
 
 export default function LoadingScreen() {

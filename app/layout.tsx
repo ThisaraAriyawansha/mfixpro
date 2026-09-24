@@ -3,18 +3,18 @@ import "./globals.css";
 import { AuthProvider } from "@/hooks/useAuth";
 
 const siteUrl = "https://nexora-pos.vercel.app";
-const ogImage = "/shop_logo/og_image.jpeg";
+const ogImage = "/shop_logo/og.jpeg";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "T&N COMPUTERS POS",
-    template: "%s | T&N COMPUTERS POS",
+    default: "M-Fixpro POS",
+    template: "%s | M-Fixpro POS",
   },
   description:
-    "T&N COMPUTERS POS is a point of sale system built for computer and accessories stores, covering sales, inventory, customers, and warranty management.",
+    "M-Fixpro POS is a point of sale system built for computer and accessories stores, covering sales, inventory, customers, and warranty management.",
   keywords: [
-    "T&N COMPUTERS POS",
+    "M-Fixpro POS",
     "point of sale",
     "POS system",
     "computer store POS",
@@ -22,10 +22,11 @@ export const metadata: Metadata = {
     "sales management",
     "warranty management",
   ],
-  applicationName: "T&N COMPUTERS POS",
-  authors: [{ name: "T&N COMPUTERS" }],
+  applicationName: "M-Fixpro POS",
+  authors: [{ name: "M-Fixpro" }],
   icons: {
-    icon: "/shop_logo/6767467478-removebg-preview.png",
+    icon: "/shop_logo/1_M.png",
+    apple: "/shop_logo/1_M.png",
   },
   alternates: {
     canonical: siteUrl,
@@ -33,22 +34,22 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: siteUrl,
-    siteName: "T&N COMPUTERS POS",
-    title: "T&N COMPUTERS POS",
+    siteName: "M-Fixpro POS",
+    title: "M-Fixpro POS",
     description:
       "Point of Sale System for Computer & Accessories - manage sales, inventory, customers, and warranty in one place.",
     images: [
       {
         url: ogImage,
-        width: 1119,
-        height: 1280,
-        alt: "T&N COMPUTERS POS",
+        width: 890,
+        height: 1008,
+        alt: "M-Fixpro POS",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "T&N COMPUTERS POS",
+    title: "M-Fixpro POS",
     description:
       "Point of Sale System for Computer & Accessories — manage sales, inventory, customers, and warranty in one place.",
     images: [ogImage],

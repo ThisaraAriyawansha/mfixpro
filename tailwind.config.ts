@@ -14,7 +14,13 @@ const config: Config = {
         poppins: ["var(--font-poppins)", "sans-serif"],
       },
       colors: {
-        black: "#1e3a5f",
+        black: "#0a0a0a",
+        brand: {
+          DEFAULT: "#e30613",
+          dark: "#b8050f",
+          light: "#fff1f1",
+          logo: "#ff0607",
+        },
         ink: "#0a0a0a",
         white: "#ffffff",
         gray: {

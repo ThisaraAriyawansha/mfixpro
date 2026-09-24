@@ -75,25 +75,26 @@ export default function Sidebar({
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 min-h-screen bg-black flex flex-col transform transition-transform duration-200 lg:static lg:translate-x-0 lg:w-56 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 min-h-screen bg-white border-r border-zinc-200 flex flex-col transform transition-transform duration-200 lg:static lg:translate-x-0 lg:w-56 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         {/* Logo */}
-        <div className="px-6 py-6 border-b border-white/10 flex items-center justify-between">
-          <div className="flex-1 flex justify-center">
+        <div className="px-4 py-2 border-b border-zinc-200 flex items-center justify-between gap-2">
+          {/* The artwork has wide transparent margins; scale inside a clipped box to trim them */}
+          <div className="flex-1 flex justify-center overflow-hidden">
             <Image
-              src="/shop_logo/login_page.png"
-              alt="T&N COMPUTERS"
-              width={200}
-              height={80}
-              className="h-16 w-auto object-contain"
+              src="/shop_logo/IMG_0112.PNG"
+              alt="M-Fixpro"
+              width={400}
+              height={200}
+              className="w-28 h-auto scale-[1.4]"
               priority
             />
           </div>
           <button
             onClick={onClose}
-            className="text-white/60 hover:text-white lg:hidden"
+            className="text-zinc-400 hover:text-ink lg:hidden"
             aria-label="Close menu"
           >
             <X size={20} />
@@ -112,8 +113,8 @@ export default function Sidebar({
                 onClick={onClose}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded text-sm font-poppins transition-colors ${
                   active
-                    ? "bg-white text-ink font-medium"
-                    : "text-white/70 hover:text-white hover:bg-white/10"
+                    ? "bg-brand text-white font-medium"
+                    : "text-zinc-600 hover:text-brand hover:bg-brand-light"
                 }`}
               >
                 <Icon size={15} />
@@ -124,35 +125,35 @@ export default function Sidebar({
         </nav>
 
         {/* User */}
-        <div className="px-3 pb-4 border-t border-white/10 pt-4">
+        <div className="px-3 pb-4 border-t border-zinc-200 pt-4">
           <Link
             href="/profile"
             onClick={onClose}
             className={`flex items-center gap-3 px-3 py-2 rounded mb-1 transition-colors group ${
-              pathname === "/profile" ? "bg-white/10" : "hover:bg-white/10"
+              pathname === "/profile" ? "bg-brand-light" : "hover:bg-zinc-100"
             }`}
           >
-            <div className="w-7 h-7 rounded-full bg-white/15 group-hover:bg-white/25 flex items-center justify-center shrink-0 transition-colors">
+            <div className="w-7 h-7 rounded-full bg-black flex items-center justify-center shrink-0 transition-colors group-hover:bg-brand">
               <span className="text-white text-xs font-prata">{initials}</span>
             </div>
             <div className="min-w-0">
-              <p className="text-white text-xs font-medium truncate">
+              <p className="text-ink text-xs font-medium truncate">
                 {user?.displayName || user?.email}
               </p>
-              <p className="text-white/60 text-xs">{userRole ?? "Admin"} · View profile</p>
+              <p className="text-zinc-500 text-xs">{userRole ?? "Admin"} · View profile</p>
             </div>
           </Link>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-3 py-2.5 rounded text-sm text-white/70 hover:text-white hover:bg-white/10 transition-colors font-poppins"
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded text-sm text-zinc-600 hover:text-brand hover:bg-brand-light transition-colors font-poppins"
           >
             <LogOut size={15} />
             Sign out
           </button>
 
-          <div className="text-white/40 text-[10px] font-poppins text-center mt-3 space-y-0.5">
+          <div className="text-zinc-400 text-[10px] font-poppins text-center mt-3 space-y-0.5">
             <p>© {year} {shopName}</p>
-            <p className="text-white/50">Design &amp; Developed by plexCode</p>
+            <p className="text-zinc-500">Design &amp; Developed by plexCode</p>
           </div>
         </div>
       </aside>

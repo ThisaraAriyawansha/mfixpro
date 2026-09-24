@@ -16,10 +16,18 @@ function HeaderClock() {
   }, []);
 
   return (
-    <div className="text-white lg:text-ink text-xs font-poppins tabular-nums">
+    <div className="shrink-0 text-right text-white lg:text-ink text-[11px] sm:text-xs font-poppins tabular-nums leading-tight whitespace-nowrap">
       {now
-        ? `${now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })} · ${now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-        : " "}
+        ? <>
+            <span className="block lg:inline">
+              {now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+            </span>
+            <span className="hidden lg:inline"> · </span>
+            <span className="block lg:inline">
+              {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </>
+        :" "}
     </div>
   );
 }
@@ -47,16 +55,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen bg-zinc-50">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between gap-3 px-4 py-2 bg-black lg:bg-white lg:border-b lg:border-zinc-200 shrink-0 z-30">
-          <div className="flex items-center gap-3">
+        <header className="flex items-center justify-between gap-3 px-4 py-2 bg-brand lg:bg-white lg:border-b lg:border-zinc-200 shrink-0 z-30">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="text-white lg:hidden"
+              className="text-white lg:hidden shrink-0"
               aria-label="Open menu"
             >
               <Menu size={22} />
             </button>
-            <span className="font-milonga text-white text-lg lg:hidden">{shopName}</span>
+            <span className="font-milonga text-white text-base sm:text-lg truncate lg:hidden">{shopName}</span>
           </div>
           <HeaderClock />
         </header>

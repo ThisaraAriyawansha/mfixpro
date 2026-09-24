@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
 
     const shop = {
-      name: shopData?.name || "T&N COMPUTERS",
+      name: shopData?.name || "M-Fixpro",
       phone: shopData?.phone || undefined,
       email: shopData?.email || undefined,
     };
