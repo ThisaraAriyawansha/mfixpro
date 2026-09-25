@@ -160,16 +160,14 @@ export default function LoginPage() {
             <div className="absolute -bottom-20 -right-10 lg:right-10 h-40 w-40 rounded-full bg-white/10" />
 
             <div className="relative flex flex-col items-center lg:items-start">
-              <div className="inline-flex rounded-2xl bg-white px-4 py-2.5 lg:py-3 shadow-lg">
-                <Image
-                  src="/shop_logo/IMG_0112.PNG"
-                  alt="M-Fixpro"
-                  width={220}
-                  height={220}
-                  className="h-10 lg:h-12 w-auto"
-                  priority
-                />
-              </div>
+              <Image
+                src="/shop_logo/logo-white.png"
+                alt="M-Fixpro"
+                width={1200}
+                height={362}
+                className="h-12 sm:h-14 lg:h-[72px] w-auto drop-shadow-[0_4px_12px_rgba(0,0,0,0.15)]"
+                priority
+              />
 
               <h2 className="mt-5 lg:mt-8 text-lg sm:text-xl lg:text-2xl font-semibold">Welcome to {shopName}</h2>
               <span className="mt-2 lg:mt-3 block h-[3px] w-10 lg:w-12 rounded-full bg-white" />
