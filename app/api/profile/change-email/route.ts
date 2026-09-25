@@ -53,6 +53,18 @@ export async function POST(req: NextRequest) {
     if (err?.code === "auth/id-token-expired" || err?.code === "auth/argument-error") {
       return NextResponse.json({ error: "Your session expired. Please sign in again." }, { status: 401 });
     }
+    if (err?.code === "auth/unauthorized-continue-uri" || err?.code === "auth/invalid-continue-uri") {
+      return NextResponse.json(
+        { error: "App URL is not an authorized domain in Firebase. Add it under Authentication → Settings → Authorized domains." },
+        { status: 500 }
+      );
+    }
+    if (err?.code === "EAUTH" || err?.code === "ESOCKET" || err?.code === "ETIMEDOUT" || err?.code === "ECONNECTION") {
+      return NextResponse.json({ error: "Mail server rejected the request. Check the MAIL_* settings." }, { status: 500 });
+    }
+    if (typeof err?.message === "string" && err.message.startsWith("Missing ")) {
+      return NextResponse.json({ error: "Server is missing configuration. Check the environment variables." }, { status: 500 });
+    }
     return NextResponse.json({ error: "Failed to send verification email. Please try again." }, { status: 500 });
   }
 }
