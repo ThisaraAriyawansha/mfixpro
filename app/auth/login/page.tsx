@@ -5,6 +5,7 @@ import Image from "next/image";
 import { useAuth } from "@/hooks/useAuth";
 import { useShopName } from "@/hooks/useShopName";
 import TurnstileWidget from "@/components/ui/TurnstileWidget";
+import { ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react";
 
 type Mode = "login" | "forgot" | "reset";
 
@@ -150,242 +151,296 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex">
-      {/* Left branding panel */}
-      <div
-        className="hidden lg:flex w-1/2 flex-col items-center justify-center p-12 relative overflow-hidden"
-        style={{
-          background: "linear-gradient(135deg, #ffffff 0%, #fafafa 55%, #fff1f1 100%)",
-        }}
-      >
-        {/* dot grid texture */}
-        <div
-          className="absolute inset-0 opacity-[0.4]"
-          style={{
-            backgroundImage: "radial-gradient(#e4e4e7 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-          }}
-        />
-        {/* color wash blobs */}
-        <div className="absolute -top-24 -left-24 w-[380px] h-[380px] rounded-full bg-black/10 blur-3xl" />
-        <div className="absolute -bottom-24 -right-16 w-[420px] h-[420px] rounded-full bg-red-500/15 blur-3xl" />
+    <div className="min-h-screen flex flex-col overflow-x-hidden font-poppins bg-gradient-to-br from-zinc-100 via-zinc-50 to-zinc-200">
+      <main className="flex-1 flex items-start sm:items-center justify-center px-3 py-6 sm:px-6 sm:py-10">
+        <div className="relative w-full max-w-[440px] lg:max-w-[900px] grid lg:grid-cols-2 rounded-3xl bg-white shadow-[0_30px_80px_-30px_rgba(10,10,10,0.3)]">
+          {/* Brand panel: compact header on mobile/tablet, left half on desktop */}
+          <div className="relative overflow-hidden rounded-t-3xl lg:rounded-tr-none lg:rounded-l-3xl bg-[#e30613] text-white px-6 py-8 sm:px-10 lg:px-12 lg:py-14 flex flex-col justify-center items-center text-center lg:items-start lg:text-left">
+            <div className="absolute -top-16 -left-16 h-40 w-40 lg:h-48 lg:w-48 rounded-full border-[24px] lg:border-[28px] border-white/10" />
+            <div className="absolute -bottom-20 -right-10 lg:right-10 h-40 w-40 rounded-full bg-white/10" />
 
-        <div className="relative w-[320px] h-[320px] rounded-full  shadow-[0_20px_60px_-15px_rgba(10,10,10,0.25)] flex items-center justify-center">
-          <Image
-            src="/shop_logo/IMG_0112.PNG"
-            alt="M-Fixpro"
-            width={360}
-            height={360}
-            className="w-[88%] h-auto drop-shadow-lg"
-            priority
-          />
-        </div>
+            <div className="relative flex flex-col items-center lg:items-start">
+              <div className="inline-flex rounded-2xl bg-white px-4 py-2.5 lg:py-3 shadow-lg">
+                <Image
+                  src="/shop_logo/IMG_0112.PNG"
+                  alt="M-Fixpro"
+                  width={220}
+                  height={220}
+                  className="h-10 lg:h-12 w-auto"
+                  priority
+                />
+              </div>
 
-        <div className="text-zinc-400 text-xs font-poppins text-center space-y-0.5 absolute bottom-12">
-          <p>© {year} {shopName}</p>
-          <p className="text-zinc-500">Design &amp; Developed by plexCode</p>
-        </div>
-      </div>
-
-      {/* Right login form */}
-      <div className="flex-1 flex flex-col justify-center px-8 py-12 lg:px-16">
-        <div className="max-w-sm w-full mx-auto">
-          {/* Mobile logo */}
-          <div className="lg:hidden mb-10 flex justify-center">
-            <Image
-              src="/shop_logo/IMG_0112.PNG"
-              alt="M-Fixpro"
-              width={280}
-              height={280}
-              className="w-auto h-32"
-              priority
-            />
+              <h2 className="mt-5 lg:mt-8 text-lg sm:text-xl lg:text-2xl font-semibold">Welcome to {shopName}</h2>
+              <span className="mt-2 lg:mt-3 block h-[3px] w-10 lg:w-12 rounded-full bg-white" />
+              <p className="hidden sm:block mt-4 lg:mt-5 max-w-xs text-sm leading-relaxed text-white/80">
+                Manage repairs, sales and billing for your shop from one simple dashboard.
+              </p>
+            </div>
           </div>
+
+          {/* Decorative ring on the divider (desktop only) */}
+          <div className="hidden lg:block absolute left-1/2 bottom-12 -translate-x-1/2 h-24 w-24 rounded-full border-[18px] border-white shadow-[0_10px_30px_-10px_rgba(10,10,10,0.25)] pointer-events-none" />
+          {/* Decorative shape on the right edge (desktop only) */}
+          <div className="hidden lg:block absolute -right-8 top-10 h-20 w-20 rotate-45 rounded-[22px] border-[14px] border-zinc-100 pointer-events-none" />
+
+          {/* Form */}
+          <div className="relative px-5 py-8 sm:px-10 sm:py-10 lg:px-14 lg:py-14">
+          <div className="mx-auto w-full max-w-[320px]">
 
           {mode === "login" && (
             <>
-              <h1 className="font-prata text-2xl text-ink mb-1">Sign in</h1>
-              <p className="text-zinc-500 text-sm mb-8 font-poppins">Enter your credentials to continue</p>
+              <Header title="Sign in" subtitle="Enter your credentials to continue" />
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1.5 uppercase tracking-wider">
-                    Email
-                  </label>
-                  <input
+                <Field label="Email">
+                  <TextInput
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="nexora-input"
-                    placeholder="admin@mfixpro.com"
-                    required
+                    onChange={setEmail}
+                    placeholder="you@example.com"
+                    autoComplete="email"
                   />
-                </div>
+                </Field>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                      Password
-                    </label>
+                <Field
+                  label="Password"
+                  action={
                     <button
                       type="button"
                       onClick={goToForgot}
-                      className="text-xs text-zinc-500 hover:text-ink font-poppins"
+                      className="text-xs text-zinc-500 hover:text-ink transition-colors"
                     >
                       Forgot password?
                     </button>
-                  </div>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="nexora-input"
-                    placeholder="••••••••"
-                    required
-                  />
-                </div>
-
-                <TurnstileWidget onVerify={setLoginToken} onExpire={() => setLoginToken("")} />
-
-                {error && <p className="text-red-500 text-sm">{error}</p>}
-
-                <button
-                  type="submit"
-                  disabled={loading || !loginToken}
-                  className="nexora-btn nexora-btn-primary w-full justify-center mt-2"
+                  }
                 >
-                  {loading ? "Signing in…" : "Sign in"}
-                </button>
+                  <PasswordInput
+                    value={password}
+                    onChange={setPassword}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                  />
+                </Field>
+
+                <TurnstileWidget className="flex justify-center" onVerify={setLoginToken} onExpire={() => setLoginToken("")} />
+
+                {error && <Message>{error}</Message>}
+
+                <SubmitButton loading={loading} disabled={!loginToken} loadingText="Signing in">
+                  Sign in
+                </SubmitButton>
               </form>
             </>
           )}
 
           {mode === "forgot" && (
             <>
-              <h1 className="font-prata text-2xl text-ink mb-1">Reset password</h1>
-              <p className="text-zinc-500 text-sm mb-8 font-poppins">
-                Enter your account email and we'll send you a 6-digit code.
-              </p>
+              <BackLink onClick={backToLogin} />
+              <Header
+                title="Reset password"
+                subtitle="Enter your email and we'll send you a 6-digit code."
+              />
 
               <form onSubmit={handleSendOtp} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1.5 uppercase tracking-wider">
-                    Email
-                  </label>
-                  <input
+                <Field label="Email">
+                  <TextInput
                     type="email"
                     value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    className="nexora-input"
-                    placeholder="admin@mfixpro.com"
-                    required
+                    onChange={setResetEmail}
+                    placeholder="you@example.com"
+                    autoComplete="email"
                   />
-                </div>
+                </Field>
 
-                <TurnstileWidget onVerify={setForgotToken} onExpire={() => setForgotToken("")} />
+                <TurnstileWidget className="flex justify-center" onVerify={setForgotToken} onExpire={() => setForgotToken("")} />
 
-                {resetError && <p className="text-red-500 text-sm">{resetError}</p>}
+                {resetError && <Message>{resetError}</Message>}
 
-                <button
-                  type="submit"
-                  disabled={resetLoading || !forgotToken}
-                  className="nexora-btn nexora-btn-primary w-full justify-center mt-2"
-                >
-                  {resetLoading ? "Sending…" : "Send code"}
-                </button>
-                <button
-                  type="button"
-                  onClick={backToLogin}
-                  className="w-full text-center text-xs text-zinc-500 hover:text-ink font-poppins mt-1"
-                >
-                  Back to sign in
-                </button>
+                <SubmitButton loading={resetLoading} disabled={!forgotToken} loadingText="Sending">
+                  Send code
+                </SubmitButton>
               </form>
             </>
           )}
 
           {mode === "reset" && (
             <>
-              <h1 className="font-prata text-2xl text-ink mb-1">Enter code</h1>
-              <p className="text-zinc-500 text-sm mb-8 font-poppins">
-                {resetInfo || `Enter the 6-digit code sent to ${resetEmail}.`}
-              </p>
+              <BackLink onClick={backToLogin} />
+              <Header title="New password" subtitle={`Enter the code sent to ${resetEmail}.`} />
 
               <form onSubmit={handleResetPassword} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1.5 uppercase tracking-wider">
-                    6-digit code
-                  </label>
-                  <input
+                <Field label="6-digit code">
+                  <TextInput
                     type="text"
                     inputMode="numeric"
+                    autoComplete="one-time-code"
                     maxLength={6}
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                    className="nexora-input tracking-[0.3em] text-center"
+                    onChange={(v) => setOtp(v.replace(/\D/g, ""))}
                     placeholder="000000"
-                    required
+                    className="text-center tracking-[0.4em]"
                   />
-                </div>
+                </Field>
 
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1.5 uppercase tracking-wider">
-                    New password
-                  </label>
-                  <input
-                    type="password"
+                <Field label="New password">
+                  <PasswordInput
                     value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="nexora-input"
+                    onChange={setNewPassword}
                     placeholder="At least 6 characters"
-                    required
+                    autoComplete="new-password"
                   />
-                </div>
+                </Field>
 
-                <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1.5 uppercase tracking-wider">
-                    Confirm new password
-                  </label>
-                  <input
-                    type="password"
+                <Field label="Confirm password">
+                  <PasswordInput
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="nexora-input"
+                    onChange={setConfirmPassword}
                     placeholder="Repeat new password"
-                    required
+                    autoComplete="new-password"
                   />
-                </div>
+                </Field>
 
-                <TurnstileWidget onVerify={setResetToken} onExpire={() => setResetToken("")} />
+                <TurnstileWidget className="flex justify-center" onVerify={setResetToken} onExpire={() => setResetToken("")} />
 
-                {resetError && <p className="text-red-500 text-sm">{resetError}</p>}
-                {resetInfo && !resetError && <p className="text-green-600 text-sm">{resetInfo}</p>}
+                {resetError && <Message>{resetError}</Message>}
+                {resetInfo && !resetError && <Message tone="success">{resetInfo}</Message>}
 
-                <button
-                  type="submit"
-                  disabled={resetLoading || !resetToken}
-                  className="nexora-btn nexora-btn-primary w-full justify-center mt-2"
-                >
-                  {resetLoading ? "Resetting…" : "Reset password"}
-                </button>
-                <button
-                  type="button"
-                  onClick={backToLogin}
-                  className="w-full text-center text-xs text-zinc-500 hover:text-ink font-poppins mt-1"
-                >
-                  Back to sign in
-                </button>
+                <SubmitButton loading={resetLoading} disabled={!resetToken} loadingText="Resetting">
+                  Reset password
+                </SubmitButton>
               </form>
             </>
           )}
-
-          {/* Mobile footer */}
-          <div className="lg:hidden text-zinc-400 text-xs font-poppins text-center space-y-0.5 mt-10">
-            <p>© {year} {shopName}</p>
-            <p className="text-zinc-500">Design &amp; Developed by plexCode</p>
+          </div>
           </div>
         </div>
-      </div>
+      </main>
+
+      <footer className="pb-8 text-center text-xs text-zinc-400 space-y-0.5">
+        <p>© {year} {shopName}</p>
+        <p>Design &amp; Developed by plexCode</p>
+      </footer>
     </div>
+  );
+}
+
+const inputBase =
+  "h-11 w-full border-0 border-b border-zinc-300 bg-transparent px-0.5 text-sm text-ink outline-none transition-colors placeholder:text-zinc-400 hover:border-zinc-400 focus:border-[#e30613] focus:ring-0";
+
+function Header({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="mb-8 text-center">
+      <h1 className="text-xl font-semibold text-ink">{title}</h1>
+      <span className="mx-auto mt-2 block h-[3px] w-8 rounded-full bg-[#e30613]" />
+      <p className="mt-3 text-sm text-zinc-500">{subtitle}</p>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  action,
+  children,
+}: {
+  label: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <label className="text-[13px] font-medium text-zinc-700">{label}</label>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function TextInput({
+  onChange,
+  className = "",
+  ...props
+}: {
+  onChange: (v: string) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange">) {
+  return (
+    <input
+      {...props}
+      onChange={(e) => onChange(e.target.value)}
+      className={`${inputBase} ${className}`}
+      required
+    />
+  );
+}
+
+function PasswordInput({
+  onChange,
+  ...props
+}: {
+  onChange: (v: string) => void;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "type">) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        {...props}
+        type={show ? "text" : "password"}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${inputBase} pr-11`}
+        required
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        className="absolute right-1.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center text-zinc-400 hover:text-ink transition-colors"
+      >
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  );
+}
+
+function SubmitButton({
+  loading,
+  disabled,
+  loadingText,
+  children,
+}: {
+  loading: boolean;
+  disabled: boolean;
+  loadingText: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="submit"
+      disabled={loading || disabled}
+      className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-full bg-[#e30613] text-sm font-semibold uppercase tracking-wide text-white shadow-[0_10px_20px_-8px_rgba(227,6,19,0.6)] transition-colors hover:bg-[#b8050f] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+    >
+      {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+      {loading ? loadingText : children}
+    </button>
+  );
+}
+
+function Message({ tone = "error", children }: { tone?: "error" | "success"; children: React.ReactNode }) {
+  return (
+    <p className={`text-sm ${tone === "error" ? "text-red-600" : "text-green-600"}`}>{children}</p>
+  );
+}
+
+function BackLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mb-6 inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-ink transition-colors"
+    >
+      <ArrowLeft className="h-3.5 w-3.5" />
+      Back to sign in
+    </button>
   );
 }
