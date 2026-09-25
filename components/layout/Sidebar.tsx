@@ -9,30 +9,70 @@ import {
   LayoutDashboard, Package, Layers, BookMarked,
   ShoppingCart, Receipt, Shield, Settings, LogOut, X,
   Users, FileText, Wrench, PackagePlus, ArrowLeftRight, PackageMinus, History,
-  Truck, ShieldCheck, Wallet, Banknote,
+  Truck, ShieldCheck, Wallet, Banknote, Boxes, ChevronDown,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
-const nav: { label: string; href: string; icon: React.ElementType; permKey?: PermissionKey }[] = [
+type NavLink = { label: string; href: string; icon: React.ElementType; permKey?: PermissionKey };
+type NavGroup = { label: string; icon: React.ElementType; children: NavLink[] };
+type NavEntry = NavLink | NavGroup;
+
+const nav: NavEntry[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permKey: "dashboard.view" },
   { label: "POS / New Sale", href: "/sales", icon: ShoppingCart, permKey: "sales.view" },
-  { label: "Bills", href: "/bills", icon: Receipt, permKey: "bills.view" },
-  { label: "Quotations", href: "/quotations", icon: FileText, permKey: "quotations.view" },
   { label: "Jobs", href: "/jobs", icon: Wrench, permKey: "jobs.view" },
-  { label: "Products", href: "/products", icon: Package, permKey: "products.view" },
-  { label: "GRN", href: "/grn", icon: PackagePlus, permKey: "grn.view" },
-  { label: "Stock Transfer", href: "/stock-transfer", icon: ArrowLeftRight, permKey: "stockTransfer.view" },
-  { label: "Stock Out", href: "/stock-out", icon: PackageMinus, permKey: "stockOut.view" },
-  { label: "Stock Movements", href: "/stock-movements", icon: History, permKey: "stockMovements.view" },
-  { label: "Suppliers", href: "/suppliers", icon: Truck, permKey: "suppliers.view" },
-  { label: "Finance", href: "/finance", icon: Wallet, permKey: "finance.view" },
-  { label: "Salary", href: "/salary", icon: Banknote, permKey: "salary.view" },
-  { label: "Brands", href: "/brands", icon: BookMarked, permKey: "brands.view" },
-  { label: "Categories", href: "/categories", icon: Layers, permKey: "categories.view" },
-  { label: "Customers", href: "/customers", icon: Users, permKey: "customers.view" },
-  { label: "Warranty", href: "/warranty", icon: Shield, permKey: "warranty.view" },
-  { label: "Audit Log", href: "/audit-log", icon: ShieldCheck, permKey: "auditLog.view" },
-  { label: "Settings", href: "/settings", icon: Settings },
+  {
+    label: "Sales",
+    icon: Receipt,
+    children: [
+      { label: "Bills", href: "/bills", icon: Receipt, permKey: "bills.view" },
+      { label: "Quotations", href: "/quotations", icon: FileText, permKey: "quotations.view" },
+      { label: "Warranty", href: "/warranty", icon: Shield, permKey: "warranty.view" },
+    ],
+  },
+  {
+    label: "Inventory",
+    icon: Boxes,
+    children: [
+      { label: "Products", href: "/products", icon: Package, permKey: "products.view" },
+      { label: "GRN", href: "/grn", icon: PackagePlus, permKey: "grn.view" },
+      { label: "Stock Transfer", href: "/stock-transfer", icon: ArrowLeftRight, permKey: "stockTransfer.view" },
+      { label: "Stock Out", href: "/stock-out", icon: PackageMinus, permKey: "stockOut.view" },
+      { label: "Stock Movements", href: "/stock-movements", icon: History, permKey: "stockMovements.view" },
+      { label: "Brands", href: "/brands", icon: BookMarked, permKey: "brands.view" },
+      { label: "Categories", href: "/categories", icon: Layers, permKey: "categories.view" },
+    ],
+  },
+  {
+    label: "Contacts",
+    icon: Users,
+    children: [
+      { label: "Customers", href: "/customers", icon: Users, permKey: "customers.view" },
+      { label: "Suppliers", href: "/suppliers", icon: Truck, permKey: "suppliers.view" },
+    ],
+  },
+  {
+    label: "Finance",
+    icon: Wallet,
+    children: [
+      { label: "Overview", href: "/finance", icon: Wallet, permKey: "finance.view" },
+      { label: "Salary", href: "/salary", icon: Banknote, permKey: "salary.view" },
+    ],
+  },
+  {
+    label: "System",
+    icon: Settings,
+    children: [
+      { label: "Audit Log", href: "/audit-log", icon: ShieldCheck, permKey: "auditLog.view" },
+      { label: "Settings", href: "/settings", icon: Settings },
+    ],
+  },
 ];
+
+const isGroup = (entry: NavEntry): entry is NavGroup => "children" in entry;
+
+const isActive = (pathname: string, href: string) =>
+  pathname === href || pathname.startsWith(href + "/");
 
 function getInitials(displayName: string | null | undefined, email: string | null | undefined): string {
   if (displayName && displayName.trim()) {
@@ -63,6 +103,36 @@ export default function Sidebar({
 
   const initials = getInitials(user?.displayName, user?.email);
   const year = new Date().getFullYear();
+
+  // Drop links the user can't access, and groups left with no children
+  const visibleNav = nav
+    .map((entry) =>
+      isGroup(entry)
+        ? { ...entry, children: entry.children.filter((c) => !c.permKey || can(c.permKey)) }
+        : entry
+    )
+    .filter((entry) => (isGroup(entry) ? entry.children.length > 0 : !entry.permKey || can(entry.permKey)));
+
+  const activeGroup = nav.find(
+    (entry) => isGroup(entry) && entry.children.some((c) => isActive(pathname, c.href))
+  )?.label;
+
+  const [openGroups, setOpenGroups] = useState<Set<string>>(
+    () => new Set(activeGroup ? [activeGroup] : [])
+  );
+
+  // Auto-expand the group containing the current page when navigating
+  useEffect(() => {
+    if (activeGroup) setOpenGroups((prev) => (prev.has(activeGroup) ? prev : new Set(prev).add(activeGroup)));
+  }, [activeGroup]);
+
+  const toggleGroup = (label: string) =>
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
 
   return (
     <>
@@ -103,23 +173,80 @@ export default function Sidebar({
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto sidebar-nav-scroll">
-          {nav.filter((item) => !item.permKey || can(item.permKey)).map((item) => {
-            const Icon = item.icon;
-            const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          {visibleNav.map((entry) => {
+            const Icon = entry.icon;
+
+            if (!isGroup(entry)) {
+              const active = isActive(pathname, entry.href);
+              return (
+                <Link
+                  key={entry.href}
+                  href={entry.href}
+                  onClick={onClose}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded text-sm font-poppins transition-colors ${
+                    active
+                      ? "bg-brand text-white font-medium"
+                      : "text-zinc-600 hover:text-brand hover:bg-brand-light"
+                  }`}
+                >
+                  <Icon size={15} />
+                  {entry.label}
+                </Link>
+              );
+            }
+
+            const expanded = openGroups.has(entry.label);
+            const groupActive = activeGroup === entry.label;
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onClose}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded text-sm font-poppins transition-colors ${
-                  active
-                    ? "bg-brand text-white font-medium"
-                    : "text-zinc-600 hover:text-brand hover:bg-brand-light"
-                }`}
-              >
-                <Icon size={15} />
-                {item.label}
-              </Link>
+              <div key={entry.label}>
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(entry.label)}
+                  aria-expanded={expanded}
+                  className={`flex items-center gap-3 w-full px-3 py-2.5 rounded text-sm font-poppins font-medium transition-colors ${
+                    groupActive ? "text-brand" : "text-ink hover:text-brand hover:bg-brand-light"
+                  }`}
+                >
+                  <Icon size={15} />
+                  <span className="flex-1 text-left">{entry.label}</span>
+                  <ChevronDown
+                    size={15}
+                    className={`text-zinc-400 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+                  />
+                </button>
+
+                {/* grid-rows trick animates height without measuring */}
+                <div
+                  className={`grid transition-[grid-template-rows] duration-200 ${
+                    expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="ml-[1.2rem] pl-2 my-0.5 border-l border-dashed border-zinc-300 space-y-0.5">
+                      {entry.children.map((child) => {
+                        const ChildIcon = child.icon;
+                        const active = isActive(pathname, child.href);
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            onClick={onClose}
+                            tabIndex={expanded ? undefined : -1}
+                            className={`flex items-center gap-3 px-3 py-2 rounded text-sm font-poppins transition-colors ${
+                              active
+                                ? "bg-brand text-white font-medium"
+                                : "text-zinc-600 hover:text-brand hover:bg-brand-light"
+                            }`}
+                          >
+                            <ChildIcon size={14} />
+                            {child.label}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
             );
           })}
         </nav>

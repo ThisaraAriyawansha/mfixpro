@@ -107,20 +107,20 @@ export default function CategoriesPage() {
               <div
                 key={cat.id}
                 onClick={() => setSelectedMain(cat)}
-                className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${selectedMain?.id === cat.id ? "bg-black text-white" : "hover:bg-zinc-50"}`}
+                className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${selectedMain?.id === cat.id ? "bg-zinc-100 text-zinc-900" : "hover:bg-zinc-50"}`}
               >
                 <div className="flex items-center gap-2">
-                  <ChevronRight size={13} className={selectedMain?.id === cat.id ? "text-white" : "text-zinc-400"} />
+                  <ChevronRight size={13} className={selectedMain?.id === cat.id ? "text-zinc-700" : "text-zinc-400"} />
                   <span className="text-sm font-medium">{cat.name}</span>
                 </div>
                 <div className="flex gap-1" onClick={e => e.stopPropagation()}>
                   <button onClick={() => { setEditingMain(cat); setMainForm({ name: cat.name, description: cat.description || "" }); setShowMainModal(true); }}
-                    className={`p-1.5 rounded hover:bg-zinc-200 transition-colors ${selectedMain?.id === cat.id ? "text-white hover:bg-zinc-700" : "text-zinc-400"}`}>
+                    className={`p-1.5 rounded hover:bg-zinc-200 transition-colors ${selectedMain?.id === cat.id ? "text-zinc-700" : "text-zinc-400"}`}>
                     <Edit2 size={11} />
                   </button>
                   {canDelete && (
                     <button onClick={() => setDeleteMainId(cat.id)}
-                      className={`p-1.5 rounded hover:bg-red-100 transition-colors ${selectedMain?.id === cat.id ? "text-red-300 hover:text-red-600" : "text-zinc-400 hover:text-red-500"}`}>
+                      className={`p-1.5 rounded hover:bg-red-100 transition-colors ${selectedMain?.id === cat.id ? "text-red-500 hover:text-red-600" : "text-zinc-400 hover:text-red-500"}`}>
                       <Trash2 size={11} />
                     </button>
                   )}
