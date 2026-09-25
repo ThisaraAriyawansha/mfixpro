@@ -672,8 +672,8 @@ export default function SettingsPage() {
       </div>
       )}
 
-      {/* Stock Location Migration — Super Admin only, one-time, resumable */}
-      {isSuperAdmin && (
+      {/* Stock Location Migration — Super Admin only, one-time, resumable. Hidden once done. */}
+      {isSuperAdmin && !loadingMigrationStatus && (!migrationStatus?.done || migrationResult) && (
       <div className="nexora-card p-4 sm:p-6 mb-6">
         <div className="flex items-center gap-3 mb-3">
           <Boxes size={16} className="text-zinc-400" />

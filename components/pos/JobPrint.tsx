@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { getShopSettings } from "@/lib/firestore";
 import { jobServicesTotal } from "@/types";
-import type { ShopSettings, JobServiceItem } from "@/types";
+import type { ShopSettings, JobServiceItem, JobDevicePart } from "@/types";
 
 interface JobPrintProps {
   job: any;
@@ -37,6 +37,7 @@ export default function JobPrint({ job }: JobPrintProps) {
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
   const device = job.deviceType === "Other" ? job.deviceTypeOther : job.deviceType;
   const services: JobServiceItem[] = job.services || [];
+  const parts: JobDevicePart[] = job.parts || [];
   const servicesTotal = jobServicesTotal(services);
   const balance = Math.max(0, (job.repairCost ?? (services.length > 0 ? servicesTotal : job.estimatedCost) ?? 0) - (job.advancePaid ?? 0));
 
@@ -71,7 +72,7 @@ export default function JobPrint({ job }: JobPrintProps) {
           <div style={{ fontSize: "7.5pt", textTransform: "uppercase", letterSpacing: "0.08em", color: "#888", marginBottom: "2px" }}>Customer Details</div>
           <div style={{ fontSize: "9.5pt", fontWeight: "600" }}>{job.customerName}</div>
           {job.customerCompany && <div style={{ fontSize: "8.5pt", color: "#555" }}>{job.customerCompany}</div>}
-          <div style={{ fontSize: "8.5pt", color: "#555" }}>{job.customerPhone}</div>
+          <div style={{ fontSize: "8.5pt", color: "#555" }}>{[job.customerPhone, job.customerPhone2].filter(Boolean).join(" / ")}</div>
           {job.customerEmail && <div style={{ fontSize: "8.5pt", color: "#555" }}>{job.customerEmail}</div>}
           {(job.customerAddress || job.customerCity) && (
             <div style={{ fontSize: "8.5pt", color: "#555" }}>{[job.customerAddress, job.customerCity].filter(Boolean).join(", ")}</div>
@@ -107,6 +108,28 @@ export default function JobPrint({ job }: JobPrintProps) {
           </tr>
         </tbody>
       </table>
+
+      {/* Device parts recorded at intake */}
+      {parts.length > 0 && (
+        <table className="job-table" style={{ width: "100%", borderCollapse: "collapse", marginBottom: "4mm" }}>
+          <thead>
+            <tr>
+              <th style={{ borderBottom: "1.5pt solid #000", padding: "1.5mm 2mm", textAlign: "left", fontSize: "7.5pt", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: "600" }}>Part</th>
+              <th style={{ borderBottom: "1.5pt solid #000", padding: "1.5mm 2mm", textAlign: "left", fontSize: "7.5pt", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: "600" }}>Spec</th>
+              <th style={{ borderBottom: "1.5pt solid #000", padding: "1.5mm 2mm", textAlign: "left", fontSize: "7.5pt", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: "600" }}>Serial No.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {parts.map((p) => (
+              <tr key={p.id}>
+                <td style={{ padding: "1.5mm 2mm", fontSize: "9pt" }}>{p.name}</td>
+                <td style={{ padding: "1.5mm 2mm", fontSize: "9pt" }}>{p.spec || "—"}</td>
+                <td style={{ padding: "1.5mm 2mm", fontSize: "9pt" }}>{p.serialNo || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       {/* Fault */}
       <div style={{ marginBottom: "3mm" }}>

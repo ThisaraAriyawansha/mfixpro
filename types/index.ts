@@ -77,6 +77,7 @@ export interface Customer {
   id: string;
   name: string;
   phone: string;
+  phone2?: string;
   email?: string;
   address?: string;
   loyaltyPoints: number;
@@ -510,10 +511,47 @@ export interface JobServiceItem {
   freeReason?: string;
 }
 
+// An internal part recorded at intake (e.g. RAM 8GB DDR4, SSD 512GB + its
+// serial) so the shop and customer can verify the same parts come back.
+export interface JobDevicePart {
+  id: string;
+  name: string;
+  spec?: string;
+  serialNo?: string;
+}
+
 export function jobServicesTotal(services?: JobServiceItem[] | null): number {
   return (services || [])
     .filter((s) => s.chargeType === "paid")
     .reduce((sum, s) => sum + (Number(s.price) || 0), 0);
+}
+
+// The lines a job is billed with at the POS. The Repair Cost set when the
+// job is marked Done is the final price: itemized services are listed, and
+// any gap between their total and the Repair Cost becomes its own line
+// (positive charge or negative adjustment). With no Repair Cost, services
+// total — or the estimate when there are no services — is the price. The
+// advance taken at intake is then deducted as a negative line so the
+// customer only pays the balance.
+export function jobBillableServices(
+  job?: Pick<Job, "id" | "services" | "repairCost" | "estimatedCost" | "advancePaid"> | null
+): JobServiceItem[] {
+  if (!job) return [];
+  const services = job.services || [];
+  const servicesTotal = jobServicesTotal(services);
+  const finalCost = Number(job.repairCost ?? (services.length > 0 ? servicesTotal : job.estimatedCost)) || 0;
+  const lines: JobServiceItem[] = [...services];
+  const diff = finalCost - servicesTotal;
+  if (diff > 0) {
+    lines.push({ id: `${job.id}-repair`, name: services.length > 0 ? "Other repair charges" : "Repair charge", price: diff, chargeType: "paid" });
+  } else if (diff < 0) {
+    lines.push({ id: `${job.id}-adjust`, name: "Repair cost adjustment", price: diff, chargeType: "paid" });
+  }
+  const advance = Math.min(Number(job.advancePaid) || 0, Math.max(0, finalCost));
+  if (advance > 0) {
+    lines.push({ id: `${job.id}-advance`, name: "Less: advance paid", price: -advance, chargeType: "paid" });
+  }
+  return lines;
 }
 
 export type JobStatus = "pending" | "ongoing" | "done" | "delivered" | "unrepairable";
@@ -537,6 +575,7 @@ export interface Job {
   customerAddress?: string;
   customerCity?: string;
   customerPhone: string;
+  customerPhone2?: string;
   customerEmail?: string;
   deviceType: string;
   deviceTypeOther?: string;
@@ -544,6 +583,7 @@ export interface Job {
   model?: string;
   serialNo?: string;
   color?: string;
+  parts?: JobDevicePart[];
   faultDescription: string;
   accessories: string[];
   accessoriesOther?: string;

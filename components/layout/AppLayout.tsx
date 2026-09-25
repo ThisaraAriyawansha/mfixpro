@@ -52,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   if (!user) return null;
 
   return (
-    <div className="flex h-screen bg-zinc-50">
+    <div className="flex h-[100dvh] bg-zinc-50">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <div className="flex-1 flex flex-col min-w-0">
         <header className="flex items-center justify-between gap-3 px-4 py-2 bg-brand lg:bg-white lg:border-b lg:border-zinc-200 shrink-0 z-30">

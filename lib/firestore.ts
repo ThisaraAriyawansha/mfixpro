@@ -8,7 +8,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { db } from "./firebase";
 import { firebaseConfig } from "./firebase";
-import type { ShopSettings, UserProfile, JobStatus, JobServiceItem, StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
+import type { ShopSettings, UserProfile, JobStatus, JobServiceItem, JobDevicePart,StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
 import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
 import { isEditableRole, getDefaultPermissions, PERMISSION_CATALOG } from "./permissions";
@@ -375,6 +375,7 @@ export async function getCustomers() {
 export async function addCustomer(data: {
   name: string;
   phone: string;
+  phone2?: string;
   email?: string;
   address?: string;
 }) {
@@ -1064,6 +1065,7 @@ export interface JobData {
   customerAddress?: string;
   customerCity?: string;
   customerPhone: string;
+  customerPhone2?: string;
   customerEmail?: string;
   deviceType: string;
   deviceTypeOther?: string;
@@ -1071,6 +1073,7 @@ export interface JobData {
   model?: string;
   serialNo?: string;
   color?: string;
+  parts?: JobDevicePart[];
   faultDescription: string;
   accessories: string[];
   accessoriesOther?: string;
@@ -1086,14 +1089,48 @@ export interface JobData {
   expectedDeliveryDate?: Date | null;
 }
 
-export async function createJob(data: JobData) {
+const JOB_NO_PATTERN = /^JOB-(\d+)$/i;
+
+function formatJobNo(n: number) {
+  return `JOB-${String(n).padStart(5, "0")}`;
+}
+
+// Preview of the number createJob() will assign if no custom number is given.
+// Only a hint for the New Job form — the real number is claimed inside the
+// createJob transaction, so two staff opening the form at once still get
+// distinct numbers.
+export async function getNextJobNo() {
+  const counterDoc = await getDoc(doc(db, "counters", "job"));
+  const current = counterDoc.exists() ? (counterDoc.data().value as number) : 0;
+  return formatJobNo(current + 1);
+}
+
+// customJobNo: a number typed in by staff (e.g. continuing a paper job-book
+// sequence). Omit it to auto-generate from the counter. A custom number in
+// the JOB-00000 format that is ahead of the counter moves the counter up to
+// it, so later auto numbers never collide with it.
+export async function createJob(data: JobData, customJobNo?: string) {
+  const custom = customJobNo?.trim().toUpperCase() || "";
+  if (custom) {
+    const dup = await getDocs(query(collection(db, "jobs"), where("jobNo", "==", custom), limit(1)));
+    if (!dup.empty) throw new Error(`Job number ${custom} is already in use.`);
+  }
+
   return runTransaction(db, async (tx) => {
     const counterRef = doc(db, "counters", "job");
     const counterDoc = await tx.get(counterRef);
     const current = counterDoc.exists() ? (counterDoc.data().value as number) : 0;
-    const next = current + 1;
-    tx.set(counterRef, { value: next });
-    const jobNo = `JOB-${String(next).padStart(5, "0")}`;
+
+    let jobNo: string;
+    if (custom) {
+      jobNo = custom;
+      const m = custom.match(JOB_NO_PATTERN);
+      if (m && Number(m[1]) > current) tx.set(counterRef, { value: Number(m[1]) });
+    } else {
+      const next = current + 1;
+      tx.set(counterRef, { value: next });
+      jobNo = formatJobNo(next);
+    }
 
     const jobRef = doc(collection(db, "jobs"));
     const jobData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));
@@ -1185,8 +1222,8 @@ export async function updateJobStatus(
 // already has its own dedicated audit trail. Every field here is safe to
 // correct because Jobs never touch stock.
 const JOB_EDITABLE_FIELDS = [
-  "customerName", "customerCompany", "customerAddress", "customerCity", "customerPhone", "customerEmail",
-  "deviceType", "deviceTypeOther", "brand", "model", "serialNo", "color",
+  "customerName", "customerCompany", "customerAddress", "customerCity", "customerPhone", "customerPhone2", "customerEmail",
+  "deviceType", "deviceTypeOther", "brand", "model", "serialNo", "color", "parts",
   "faultDescription", "accessories", "accessoriesOther", "physicalCondition", "specialNotes",
   "assignedTechnicianId", "assignedTechnicianName", "services",
   "estimatedCost", "advancePaid", "expectedDeliveryDate",

@@ -13,7 +13,7 @@ export default function CustomersPage() {
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
-  const [form, setForm] = useState({ name: "", phone: "", email: "", address: "" });
+  const [form, setForm] = useState({ name: "", phone: "", phone2: "", email: "", address: "" });
 
   useEffect(() => { load(); }, []);
 
@@ -22,8 +22,8 @@ export default function CustomersPage() {
     setCustomers(data as Customer[]);
   }
 
-  const openAdd = () => { setEditing(null); setForm({ name: "", phone: "", email: "", address: "" }); setShowModal(true); };
-  const openEdit = (c: Customer) => { setEditing(c); setForm({ name: c.name, phone: c.phone, email: c.email || "", address: c.address || "" }); setShowModal(true); };
+  const openAdd = () => { setEditing(null); setForm({ name: "", phone: "", phone2: "", email: "", address: "" }); setShowModal(true); };
+  const openEdit = (c: Customer) => { setEditing(c); setForm({ name: c.name, phone: c.phone, phone2: c.phone2 || "", email: c.email || "", address: c.address || "" }); setShowModal(true); };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +34,7 @@ export default function CustomersPage() {
   };
 
   const filtered = customers.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search)
+    c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search) || !!c.phone2?.includes(search)
   );
 
   if (!canView) return <AccessRestricted message="You don't have permission to view Customers." />;
@@ -70,7 +70,7 @@ export default function CustomersPage() {
               <div key={c.id} className="px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 hover:bg-zinc-50 transition-colors">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-ink">{c.name}</p>
-                  <p className="text-xs text-zinc-400">{c.phone} {c.email ? `· ${c.email}` : ""}</p>
+                  <p className="text-xs text-zinc-400">{[c.phone, c.phone2].filter(Boolean).join(" / ")} {c.email ? `· ${c.email}` : ""}</p>
                   {c.address && <p className="text-xs text-zinc-400">{c.address}</p>}
                 </div>
                 <div className="flex items-center gap-4">
@@ -93,6 +93,7 @@ export default function CustomersPage() {
             <form onSubmit={handleSubmit} className="px-6 py-4 space-y-3">
               <input className="nexora-input" required placeholder="Full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
               <input className="nexora-input" required placeholder="Phone number" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
+              <input className="nexora-input" placeholder="Phone number 2 (optional)" value={form.phone2} onChange={e => setForm({ ...form, phone2: e.target.value })} />
               <input className="nexora-input" placeholder="Email (optional)" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
               <input className="nexora-input" placeholder="Address (optional)" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />
               <button type="submit" className="nexora-btn nexora-btn-primary w-full justify-center">{editing ? "Update Customer" : "Add Customer"}</button>

@@ -143,6 +143,16 @@ input[type="number"]::-webkit-inner-spin-button {
   margin: 0;
 }
 
+/* iOS Safari zooms the page when focusing a field with font-size < 16px.
+   Bump form fields to 16px on touch devices only; desktop keeps its sizing. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @layer components {
   .nexora-card {
     background: #ffffff;

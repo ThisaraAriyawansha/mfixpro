@@ -2,11 +2,12 @@
 import { useEffect, useState, useRef } from "react";
 import {
   getCustomers, getTechnicians, getJobs, getJob, createJob, updateJobStatus, getAllJobsWithHistory, adminUpdateJob,
+  getNextJobNo,
 } from "@/lib/firestore";
-import type { Customer, JobStatus, JobServiceItem, UserProfile } from "@/types";
+import type { Customer, JobStatus, JobServiceItem, JobDevicePart, UserProfile } from "@/types";
 import { jobServicesTotal } from "@/types";
 import {
-  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, Pencil,
+  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, Pencil, RotateCcw,
 } from "lucide-react";
 import JobPrint from "@/components/pos/JobPrint";
 import { useReactToPrint } from "react-to-print";
@@ -29,6 +30,17 @@ const PAGE_SIZE = 10;
 const DEVICE_TYPES = ["Desktop", "Laptop", "Printer", "Monitor", "CCTV", "Other"];
 const ACCESSORY_OPTIONS = ["Charger", "Power Cable", "Battery", "Adapter", "Bag", "Mouse", "Keyboard", "HDD/SSD"];
 const CONDITION_OPTIONS = ["Good", "Scratches", "Cracked", "Broken Hinges", "Liquid Damage", "Missing Parts"];
+
+// Quick-add suggestions for the Device Parts list, per device type. Staff can
+// still type any part name via "Add Part".
+const PART_SUGGESTIONS: Record<string, string[]> = {
+  Laptop: ["RAM", "SSD", "HDD", "Battery", "WiFi Card", "Keyboard", "Display"],
+  Desktop: ["RAM", "SSD", "HDD", "Processor", "Motherboard", "GPU", "Power Supply", "WiFi Card"],
+  Printer: ["Cartridge", "Toner", "Drum Unit", "Power Cable"],
+  Monitor: ["Power Adapter", "Stand", "Cable"],
+  CCTV: ["HDD", "DVR/NVR", "Camera", "Power Adapter"],
+  Other: [],
+};
 
 const STATUS_LABEL: Record<JobStatus, string> = {
   pending: "Job Pending",
@@ -62,6 +74,7 @@ function emptyForm() {
     customerAddress: "",
     customerCity: "",
     customerPhone: "",
+    customerPhone2: "",
     customerEmail: "",
     deviceType: "Laptop",
     deviceTypeOther: "",
@@ -69,6 +82,7 @@ function emptyForm() {
     model: "",
     serialNo: "",
     color: "",
+    parts: [] as JobDevicePart[],
     faultDescription: "",
     accessories: [] as string[],
     accessoriesOther: "",
@@ -81,6 +95,98 @@ function emptyForm() {
     advancePaid: 0,
     expectedDeliveryDate: "",
   };
+}
+
+// Drops rows left without a part name and trims the rest before saving.
+function cleanParts(parts: JobDevicePart[]): JobDevicePart[] {
+  return parts
+    .filter((p) => p.name.trim())
+    .map((p) => ({ id: p.id, name: p.name.trim(), spec: (p.spec || "").trim(), serialNo: (p.serialNo || "").trim() }));
+}
+
+// Shared editor for the Device Parts list (RAM, SSD, HDD… with spec and
+// serial) — used in both the New Job and Edit Job forms.
+function DevicePartsEditor({
+  parts,
+  deviceType,
+  setForm,
+}: {
+  parts: JobDevicePart[];
+  deviceType: string;
+  setForm: React.Dispatch<React.SetStateAction<any>>;
+}) {
+  const suggestions = PART_SUGGESTIONS[deviceType] || [];
+
+  const addRow = (name = "") =>
+    setForm((f: any) => ({
+      ...f,
+      parts: [...(f.parts || []), { id: crypto.randomUUID(), name, spec: "", serialNo: "" }],
+    }));
+
+  const updateRow = (id: string, patch: Partial<JobDevicePart>) =>
+    setForm((f: any) => ({
+      ...f,
+      parts: (f.parts || []).map((p: JobDevicePart) => (p.id === id ? { ...p, ...patch } : p)),
+    }));
+
+  const removeRow = (id: string) =>
+    setForm((f: any) => ({ ...f, parts: (f.parts || []).filter((p: JobDevicePart) => p.id !== id) }));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-xs text-zinc-500 uppercase tracking-wider">Device Parts</label>
+        <button type="button" onClick={() => addRow()} className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs">
+          <Plus size={12} /> Add Part
+        </button>
+      </div>
+      {suggestions.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {suggestions.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => addRow(s)}
+              className="px-3 py-1 rounded-full text-xs border border-dashed border-zinc-300 text-zinc-600 hover:border-zinc-500 flex items-center gap-1"
+            >
+              <Plus size={10} /> {s}
+            </button>
+          ))}
+        </div>
+      )}
+      {parts.length === 0 ? (
+        <p className="text-xs text-zinc-400">No parts recorded — add RAM, SSD, HDD etc. with their serials for safekeeping.</p>
+      ) : (
+        <div className="space-y-2">
+          {parts.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-2 bg-zinc-50 border border-zinc-100 rounded-lg p-2">
+              <input
+                className="nexora-input flex-1 min-w-[110px]"
+                placeholder="Part, e.g. RAM"
+                value={p.name}
+                onChange={(e) => updateRow(p.id, { name: e.target.value })}
+              />
+              <input
+                className="nexora-input flex-1 min-w-[130px]"
+                placeholder="Spec, e.g. 8GB DDR4 Kingston"
+                value={p.spec || ""}
+                onChange={(e) => updateRow(p.id, { spec: e.target.value })}
+              />
+              <input
+                className="nexora-input flex-1 min-w-[130px]"
+                placeholder="Serial No."
+                value={p.serialNo || ""}
+                onChange={(e) => updateRow(p.id, { serialNo: e.target.value })}
+              />
+              <button type="button" onClick={() => removeRow(p.id)} className="text-zinc-400 hover:text-red-600 shrink-0">
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Shared editor for the Services & Charges line items — used in both the
@@ -212,6 +318,10 @@ export default function JobsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [customerSearch, setCustomerSearch] = useState("");
+  // jobNo is prefilled with the auto number but editable; autoJobNo keeps the
+  // preview so we know whether staff changed it.
+  const [jobNo, setJobNo] = useState("");
+  const [autoJobNo, setAutoJobNo] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -292,14 +402,23 @@ export default function JobsPage() {
 
   const openCreate = () => {
     resetForm();
+    setJobNo("");
+    setAutoJobNo("");
     setShowCreate(true);
+    getNextJobNo()
+      .then((next) => {
+        setAutoJobNo(next);
+        setJobNo((cur) => cur || next);
+      })
+      .catch(() => {});
   };
 
   const filteredCustomers = customerSearch
     ? customers.filter(
         (c) =>
           c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-          c.phone?.toLowerCase().includes(customerSearch.toLowerCase())
+          c.phone?.toLowerCase().includes(customerSearch.toLowerCase()) ||
+          c.phone2?.toLowerCase().includes(customerSearch.toLowerCase())
       ).slice(0, 8)
     : [];
 
@@ -309,6 +428,7 @@ export default function JobsPage() {
       customerId: c.id,
       customerName: c.name,
       customerPhone: c.phone || "",
+      customerPhone2: c.phone2 || "",
       customerEmail: c.email || "",
       customerAddress: c.address || "",
     }));
@@ -325,6 +445,9 @@ export default function JobsPage() {
       setSaveError("Please describe the fault / customer complaint.");
       return;
     }
+    // Unchanged (or cleared) → let createJob claim the next number itself.
+    const typedJobNo = jobNo.trim().toUpperCase();
+    const customJobNo = typedJobNo && typedJobNo !== autoJobNo ? typedJobNo : undefined;
     setSaving(true);
     try {
       const result = await createJob({
@@ -334,6 +457,7 @@ export default function JobsPage() {
         customerAddress: form.customerAddress.trim(),
         customerCity: form.customerCity.trim(),
         customerPhone: form.customerPhone.trim(),
+        customerPhone2: form.customerPhone2.trim(),
         customerEmail: form.customerEmail.trim(),
         deviceType: form.deviceType,
         deviceTypeOther: form.deviceType === "Other" ? form.deviceTypeOther.trim() : "",
@@ -341,6 +465,7 @@ export default function JobsPage() {
         model: form.model.trim(),
         serialNo: form.serialNo.trim(),
         color: form.color.trim(),
+        parts: cleanParts(form.parts),
         faultDescription: form.faultDescription.trim(),
         accessories: form.accessories,
         accessoriesOther: form.accessoriesOther.trim(),
@@ -354,7 +479,7 @@ export default function JobsPage() {
         estimatedCost: Number(form.estimatedCost) || 0,
         advancePaid: Number(form.advancePaid) || 0,
         expectedDeliveryDate: form.expectedDeliveryDate ? new Date(`${form.expectedDeliveryDate}T00:00:00`) : null,
-      });
+      }, customJobNo);
       await loadJobs();
       setShowCreate(false);
       const full = await getJob(result.jobId);
@@ -397,6 +522,7 @@ export default function JobsPage() {
       customerAddress: viewJob.customerAddress || "",
       customerCity: viewJob.customerCity || "",
       customerPhone: viewJob.customerPhone || "",
+      customerPhone2: viewJob.customerPhone2 || "",
       customerEmail: viewJob.customerEmail || "",
       deviceType: viewJob.deviceType || "Laptop",
       deviceTypeOther: viewJob.deviceTypeOther || "",
@@ -404,6 +530,7 @@ export default function JobsPage() {
       model: viewJob.model || "",
       serialNo: viewJob.serialNo || "",
       color: viewJob.color || "",
+      parts: viewJob.parts || [],
       faultDescription: viewJob.faultDescription || "",
       accessories: viewJob.accessories || [],
       accessoriesOther: viewJob.accessoriesOther || "",
@@ -433,6 +560,7 @@ export default function JobsPage() {
           customerAddress: editJobForm.customerAddress,
           customerCity: editJobForm.customerCity,
           customerPhone: editJobForm.customerPhone,
+          customerPhone2: editJobForm.customerPhone2.trim(),
           customerEmail: editJobForm.customerEmail,
           deviceType: editJobForm.deviceType,
           deviceTypeOther: editJobForm.deviceTypeOther,
@@ -440,6 +568,7 @@ export default function JobsPage() {
           model: editJobForm.model,
           serialNo: editJobForm.serialNo,
           color: editJobForm.color,
+          parts: cleanParts(editJobForm.parts),
           faultDescription: editJobForm.faultDescription,
           accessories: editJobForm.accessories,
           accessoriesOther: editJobForm.accessoriesOther,
@@ -503,7 +632,8 @@ export default function JobsPage() {
     const matchesSearch =
       j.jobNo?.toLowerCase().includes(search.toLowerCase()) ||
       j.customerName?.toLowerCase().includes(search.toLowerCase()) ||
-      j.customerPhone?.toLowerCase().includes(search.toLowerCase());
+      j.customerPhone?.toLowerCase().includes(search.toLowerCase()) ||
+      j.customerPhone2?.toLowerCase().includes(search.toLowerCase());
     if (!matchesSearch) return false;
 
     if (statusFilter !== "all" && j.status !== statusFilter) return false;
@@ -545,7 +675,7 @@ export default function JobsPage() {
             csvEscape(job.jobNo),
             csvEscape(formatDate(job.createdAt)),
             csvEscape(job.customerName),
-            csvEscape(job.customerPhone),
+            csvEscape([job.customerPhone, job.customerPhone2].filter(Boolean).join(" / ")),
             csvEscape(device),
             csvEscape(STATUS_LABEL[job.status as JobStatus] ?? job.status),
             csvEscape(job.estimatedCost),
@@ -688,7 +818,7 @@ export default function JobsPage() {
       {/* Create job modal */}
       {showCreate && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl w-full max-w-3xl xl:w-[70vw] xl:max-w-none max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 border-b border-zinc-100 sticky top-0 z-20 bg-white flex items-center justify-between">
               <h2 className="font-prata text-lg flex items-center gap-2"><Wrench size={16} /> New Job Note</h2>
               <button onClick={() => setShowCreate(false)} className="text-zinc-400 hover:text-ink">
@@ -697,6 +827,34 @@ export default function JobsPage() {
             </div>
 
             <div className="px-6 py-4 space-y-5">
+              {/* Job number — auto-filled, editable */}
+              <div className="sm:max-w-xs">
+                <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Job No.</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="nexora-input font-medium"
+                    placeholder={autoJobNo || "Auto"}
+                    value={jobNo}
+                    onChange={(e) => setJobNo(e.target.value)}
+                  />
+                  {autoJobNo && jobNo.trim().toUpperCase() !== autoJobNo && (
+                    <button
+                      type="button"
+                      onClick={() => setJobNo(autoJobNo)}
+                      title="Use auto number"
+                      className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs shrink-0"
+                    >
+                      <RotateCcw size={12} /> Auto
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {autoJobNo && jobNo.trim().toUpperCase() !== autoJobNo && jobNo.trim()
+                    ? "Custom job number — must not already be used."
+                    : "Auto-generated. You can type a different number."}
+                </p>
+              </div>
+
               {/* Customer search */}
               <div>
                 <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Find Existing Customer</label>
@@ -737,20 +895,24 @@ export default function JobsPage() {
                   <input className="nexora-input" value={form.customerPhone} onChange={(e) => setForm((f) => ({ ...f, customerPhone: e.target.value }))} />
                 </div>
                 <div>
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Mobile No. 2 (Optional)</label>
+                  <input className="nexora-input" value={form.customerPhone2} onChange={(e) => setForm((f) => ({ ...f, customerPhone2: e.target.value }))} />
+                </div>
+                <div>
                   <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Company (Optional)</label>
                   <input className="nexora-input" value={form.customerCompany} onChange={(e) => setForm((f) => ({ ...f, customerCompany: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Address</label>
-                  <input className="nexora-input" value={form.customerAddress} onChange={(e) => setForm((f) => ({ ...f, customerAddress: e.target.value }))} />
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Email (Optional)</label>
+                  <input className="nexora-input" value={form.customerEmail} onChange={(e) => setForm((f) => ({ ...f, customerEmail: e.target.value }))} />
                 </div>
                 <div>
                   <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">City</label>
                   <input className="nexora-input" value={form.customerCity} onChange={(e) => setForm((f) => ({ ...f, customerCity: e.target.value }))} />
                 </div>
-                <div>
-                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Email (Optional)</label>
-                  <input className="nexora-input" value={form.customerEmail} onChange={(e) => setForm((f) => ({ ...f, customerEmail: e.target.value }))} />
+                <div className="sm:col-span-3">
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Address</label>
+                  <input className="nexora-input" value={form.customerAddress} onChange={(e) => setForm((f) => ({ ...f, customerAddress: e.target.value }))} />
                 </div>
               </div>
 
@@ -797,6 +959,8 @@ export default function JobsPage() {
                   <input className="nexora-input" value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} />
                 </div>
               </div>
+
+              <DevicePartsEditor parts={form.parts} deviceType={form.deviceType} setForm={setForm} />
 
               <div>
                 <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Fault / Customer Complaint *</label>
@@ -935,7 +1099,7 @@ export default function JobsPage() {
                 <div className="min-w-0">
                   <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Customer</p>
                   <p className="text-sm font-medium truncate">{viewJob.customerName}</p>
-                  <p className="text-xs text-zinc-500">{viewJob.customerPhone}</p>
+                  <p className="text-xs text-zinc-500">{[viewJob.customerPhone, viewJob.customerPhone2].filter(Boolean).join(" / ")}</p>
                 </div>
                 <div className="min-w-0">
                   <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Device</p>
@@ -957,6 +1121,23 @@ export default function JobsPage() {
                   <p className="text-sm font-medium">{viewJob.receivedByName?.includes("@") ? "Staff" : viewJob.receivedByName}</p>
                 </div>
               </div>
+
+              {viewJob.parts && viewJob.parts.length > 0 && (
+                <div>
+                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Device Parts</p>
+                  <div className="space-y-1.5">
+                    {viewJob.parts.map((p: JobDevicePart) => (
+                      <div key={p.id} className="flex flex-wrap items-center justify-between text-sm gap-x-3">
+                        <span className="min-w-0">
+                          <span className="font-medium">{p.name}</span>
+                          {p.spec ? <span className="text-zinc-500"> — {p.spec}</span> : null}
+                        </span>
+                        <span className="text-xs text-zinc-500 shrink-0">{p.serialNo ? `S/N: ${p.serialNo}` : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Fault / Complaint</p>
@@ -1109,20 +1290,24 @@ export default function JobsPage() {
                   <input className="nexora-input" value={editJobForm.customerPhone} onChange={(e) => setEditJobForm((f) => ({ ...f, customerPhone: e.target.value }))} />
                 </div>
                 <div>
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Mobile No. 2 (Optional)</label>
+                  <input className="nexora-input" value={editJobForm.customerPhone2} onChange={(e) => setEditJobForm((f) => ({ ...f, customerPhone2: e.target.value }))} />
+                </div>
+                <div>
                   <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Company (Optional)</label>
                   <input className="nexora-input" value={editJobForm.customerCompany} onChange={(e) => setEditJobForm((f) => ({ ...f, customerCompany: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Address</label>
-                  <input className="nexora-input" value={editJobForm.customerAddress} onChange={(e) => setEditJobForm((f) => ({ ...f, customerAddress: e.target.value }))} />
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Email (Optional)</label>
+                  <input className="nexora-input" value={editJobForm.customerEmail} onChange={(e) => setEditJobForm((f) => ({ ...f, customerEmail: e.target.value }))} />
                 </div>
                 <div>
                   <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">City</label>
                   <input className="nexora-input" value={editJobForm.customerCity} onChange={(e) => setEditJobForm((f) => ({ ...f, customerCity: e.target.value }))} />
                 </div>
-                <div>
-                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Email (Optional)</label>
-                  <input className="nexora-input" value={editJobForm.customerEmail} onChange={(e) => setEditJobForm((f) => ({ ...f, customerEmail: e.target.value }))} />
+                <div className="sm:col-span-3">
+                  <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Address</label>
+                  <input className="nexora-input" value={editJobForm.customerAddress} onChange={(e) => setEditJobForm((f) => ({ ...f, customerAddress: e.target.value }))} />
                 </div>
               </div>
 
@@ -1168,6 +1353,8 @@ export default function JobsPage() {
                   <input className="nexora-input" value={editJobForm.color} onChange={(e) => setEditJobForm((f) => ({ ...f, color: e.target.value }))} />
                 </div>
               </div>
+
+              <DevicePartsEditor parts={editJobForm.parts} deviceType={editJobForm.deviceType} setForm={setEditJobForm} />
 
               <div>
                 <label className="text-xs text-zinc-500 uppercase tracking-wider mb-1 block">Fault / Customer Complaint *</label>

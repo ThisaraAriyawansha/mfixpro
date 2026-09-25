@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
 import { getProducts, getCustomers, addCustomer, createSale, getBatches, getAvailableUnits, getMainCategories, getSubCategories, getCurrentOpenShift, openShift, closeShift, getJobs, updateJobStatus } from "@/lib/firestore";
-import { Product, Customer, CartItem, MainCategory, SubCategory, Shift, SalePaymentMethod, SalePaymentSplit, SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL, jobServicesTotal } from "@/types";
+import { Product, Customer, CartItem, MainCategory, SubCategory, Shift, SalePaymentMethod, SalePaymentSplit, SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL, jobServicesTotal, jobBillableServices } from "@/types";
 import { Search, Plus, Minus, Trash2, Printer, User, X, Check, Download, Mail, Wallet, Lock, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import BillPrint from "@/components/pos/BillPrint";
@@ -384,7 +384,8 @@ export default function SalesPage() {
   const isKokoPay = selectedMethods.length === 1 && selectedMethods[0] === "kokopay";
   const isSplitMode = selectedMethods.length > 1;
   const kokoMultiplier = isKokoPay && kokoPayPercent > 0 ? 1 + kokoPayPercent / 100 : 1;
-  const baseJobServicesAmount = jobServicesTotal(attachedJob?.services);
+  const attachedJobServices = jobBillableServices(attachedJob);
+  const baseJobServicesAmount = jobServicesTotal(attachedJobServices);
   const baseCartSubtotal = cart.reduce((s, i) => s + i.lineTotal, 0);
   const baseSubtotal = baseCartSubtotal + baseJobServicesAmount;
   const jobServicesAmount = Math.round(baseJobServicesAmount * kokoMultiplier);
@@ -428,9 +429,9 @@ export default function SalesPage() {
         const unitPrice = Math.round(i.unitPrice * kokoMultiplier);
         return { ...i, unitPrice, lineTotal: i.qty * (unitPrice - i.discount) };
       });
-      const saleServices = attachedJob?.services?.map((s: any) =>
+      const saleServices = attachedJobServices.map((s) =>
         s.chargeType === "paid" && kokoMultiplier > 1 ? { ...s, price: Math.round(s.price * kokoMultiplier) } : s
-      ) || [];
+      );
       const payments: SalePaymentSplit[] | undefined = isSplitMode
         ? selectedMethods.map(m => ({ method: m, amount: Number(splitAmounts[m]) || 0 }))
         : undefined;
@@ -687,11 +688,11 @@ export default function SalesPage() {
               <button onClick={detachJob}><X size={13} className="text-zinc-400" /></button>
             </div>
             <p className="text-xs text-zinc-500 mb-2">{attachedJob.customerName} · {attachedJob.deviceType === "Other" ? attachedJob.deviceTypeOther : attachedJob.deviceType}</p>
-            {(attachedJob.services || []).length === 0 ? (
-              <p className="text-xs text-zinc-400">No services recorded on this job.</p>
+            {attachedJobServices.length === 0 ? (
+              <p className="text-xs text-zinc-400">No services or repair cost recorded on this job.</p>
             ) : (
               <div className="space-y-1">
-                {(attachedJob.services || []).map((s: any) => (
+                {attachedJobServices.map((s) => (
                   <div key={s.id} className="flex items-center justify-between text-xs">
                     <span className="text-zinc-600">{s.name}{s.chargeType === "free" && s.freeReason ? ` — ${s.freeReason}` : ""}</span>
                     <span className={`font-medium ${s.chargeType === "free" ? "text-green-600" : "text-ink"}`}>
@@ -1032,7 +1033,7 @@ export default function SalesPage() {
                         <p className="text-sm font-medium">{j.jobNo} · {j.customerName}</p>
                         <p className="text-xs text-zinc-400 truncate">{j.customerPhone} · {j.deviceType === "Other" ? j.deviceTypeOther : j.deviceType}</p>
                       </div>
-                      <span className="text-xs font-medium shrink-0">Rs. {jobServicesTotal(j.services).toLocaleString()}</span>
+                      <span className="text-xs font-medium shrink-0">Rs. {jobServicesTotal(jobBillableServices(j)).toLocaleString()}</span>
                     </button>
                   ))
                 )}
