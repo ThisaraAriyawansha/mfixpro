@@ -217,7 +217,7 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="nexora-input"
-                    placeholder="admin@nexora.com"
+                    placeholder="admin@mfixpro.com"
                     required
                   />
                 </div>
@@ -277,7 +277,7 @@ export default function LoginPage() {
                     value={resetEmail}
                     onChange={(e) => setResetEmail(e.target.value)}
                     className="nexora-input"
-                    placeholder="admin@nexora.com"
+                    placeholder="admin@mfixpro.com"
                     required
                   />
                 </div>
