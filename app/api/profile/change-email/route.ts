@@ -32,7 +32,8 @@ export async function POST(req: NextRequest) {
     }
 
     const actionCodeSettings = {
-      url: `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/auth/login`,
+      // new URL() normalizes a trailing slash in NEXT_PUBLIC_APP_URL (avoids "//auth/login")
+      url: new URL("/auth/login", process.env.NEXT_PUBLIC_APP_URL || req.nextUrl.origin).toString(),
       handleCodeInApp: false,
     };
 
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
     }
     if (err?.code === "auth/unauthorized-continue-uri" || err?.code === "auth/invalid-continue-uri") {
       return NextResponse.json(
-        { error: "App URL is not an authorized domain in Firebase. Add it under Authentication → Settings → Authorized domains." },
+        { error: `App URL is not an authorized domain in Firebase (${err.code}). Add it under Authentication → Settings → Authorized domains.` },
         { status: 500 }
       );
     }
