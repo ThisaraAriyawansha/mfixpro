@@ -31,9 +31,11 @@ export default function SalesPage() {
   // selecting anything else while it's active replaces it right back out.
   const [selectedMethods, setSelectedMethods] = useState<SalePaymentMethod[]>(["cash"]);
   const [splitAmounts, setSplitAmounts] = useState<Record<string, string>>({});
-  const [kokoPayPercent, setKokoPayPercent] = useState(0);
-  const [showKokoPayModal, setShowKokoPayModal] = useState(false);
-  const [kokoPayPercentInput, setKokoPayPercentInput] = useState("");
+  // Surcharge % for a single-method Card or KokoPay sale. Which method it
+  // belongs to is derived from selectedMethods (see chargeMethod below).
+  const [chargePercent, setChargePercent] = useState(0);
+  const [chargeModalMethod, setChargeModalMethod] = useState<"card" | "kokopay" | null>(null);
+  const [chargePercentInput, setChargePercentInput] = useState("");
   const [amountTendered, setAmountTendered] = useState("");
   const [note, setNote] = useState("");
   const [completedSale, setCompletedSale] = useState<any>(null);
@@ -366,7 +368,7 @@ export default function SalesPage() {
       if (i.tempId !== tempId) return i;
       // Clamp against the KokoPay-inflated price (what's actually charged),
       // not the base DB price, so the discount input's own max lines up.
-      const effectivePrice = Math.round(i.unitPrice * kokoMultiplier);
+      const effectivePrice = Math.round(i.unitPrice * chargeMultiplier);
       const clamped = Math.max(0, Math.min(disc, effectivePrice));
       return { ...i, discount: clamped, lineTotal: i.qty * (i.unitPrice - clamped) };
     }));
@@ -374,42 +376,74 @@ export default function SalesPage() {
 
   const removeItem = (tempId: string) => setCart(cart.filter(i => i.tempId !== tempId));
 
-  // KokoPay charges a per-item price increase — entered as a % at payment-
-  // method selection, it raises each product/service's own price rather
-  // than adding a separate "fee" line, so the customer's bill just shows
-  // higher item prices like a normal sale (no KokoPay line item anywhere on
-  // it). kokoPayChargeAmount is kept on the sale purely as reporting
+  // Card and KokoPay both charge a per-item price increase — entered as a %
+  // at payment-method selection, it raises each product/service's own price
+  // rather than adding a separate "fee" line, so the customer's bill just
+  // shows higher item prices like a normal sale (no surcharge line item
+  // anywhere on it). chargeAmount is kept on the sale purely as reporting
   // metadata — how much of the total above is attributable to the
   // surcharge — never rendered as its own addable row.
+  //
+  // KokoPay is always alone. Card can also sit inside a split (e.g. Cash +
+  // Card): there the % is charged only on the card portion — staff type the
+  // other legs, the card leg is the auto-filled remainder plus its fee, and
+  // that fee is spread across item prices the same way.
   const isKokoPay = selectedMethods.length === 1 && selectedMethods[0] === "kokopay";
   const isSplitMode = selectedMethods.length > 1;
-  const kokoMultiplier = isKokoPay && kokoPayPercent > 0 ? 1 + kokoPayPercent / 100 : 1;
+  const chargeMethod: "card" | "kokopay" | null =
+    isKokoPay ? "kokopay" : selectedMethods.includes("card") ? "card" : null;
+  const chargeMethodLabel = chargeMethod ? SALE_PAYMENT_METHOD_LABEL[chargeMethod] : "";
+  const isSplitCardCharge = isSplitMode && chargeMethod === "card" && chargePercent > 0;
   const attachedJobServices = jobBillableServices(attachedJob);
   const baseJobServicesAmount = jobServicesTotal(attachedJobServices);
   const baseCartSubtotal = cart.reduce((s, i) => s + i.lineTotal, 0);
   const baseSubtotal = baseCartSubtotal + baseJobServicesAmount;
-  const jobServicesAmount = Math.round(baseJobServicesAmount * kokoMultiplier);
+  const otherLegsTotal = selectedMethods.filter(m => m !== "card").reduce((s, m) => s + (Number(splitAmounts[m]) || 0), 0);
+  // Card portion before its fee = what's left of the (pre-surcharge) bill
+  // after the cash/transfer legs.
+  const splitCardBase = Math.max(0, baseSubtotal - discount - pointsToRedeem - otherLegsTotal);
+  const splitCardFee = isSplitCardCharge ? Math.round(splitCardBase * chargePercent / 100) : 0;
+  const chargeMultiplier = !chargeMethod || chargePercent <= 0
+    ? 1
+    : isSplitCardCharge
+      ? (baseSubtotal > 0 ? 1 + splitCardFee / baseSubtotal : 1)
+      : 1 + chargePercent / 100;
+  const jobServicesAmount = Math.round(baseJobServicesAmount * chargeMultiplier);
   const cartSubtotal = cart.reduce((s, i) => {
-    const unitPrice = Math.round(i.unitPrice * kokoMultiplier);
+    const unitPrice = Math.round(i.unitPrice * chargeMultiplier);
     return s + i.qty * (unitPrice - i.discount);
   }, 0);
   const subtotal = cartSubtotal + jobServicesAmount;
   const totalAmount = Math.max(0, subtotal - discount - pointsToRedeem);
-  const kokoPayChargeAmount = kokoMultiplier > 1 ? Math.max(0, subtotal - baseSubtotal) : 0;
+  const chargeAmount = chargeMultiplier > 1 ? Math.max(0, subtotal - baseSubtotal) : 0;
   const change = Number(amountTendered) - totalAmount;
-  const splitAmountsTotal = selectedMethods.reduce((s, m) => s + (Number(splitAmounts[m]) || 0), 0);
+  // With a split card charge the card leg isn't typed — it's whatever the
+  // (surcharged) total still needs after the other legs, so it always balances.
+  const splitCardLeg = Math.max(0, totalAmount - otherLegsTotal);
+  const legAmount = (m: SalePaymentMethod) =>
+    isSplitCardCharge && m === "card" ? splitCardLeg : Number(splitAmounts[m]) || 0;
+  const splitAmountsTotal = selectedMethods.reduce((s, m) => s + legAmount(m), 0);
   const splitRemaining = totalAmount - splitAmountsTotal;
   const toggleMethod = (value: SalePaymentMethod) => {
-    setKokoPayPercent(0);
+    // The card % stays while Card stays selected (e.g. adding Cash to make a
+    // split); removing Card or leaving KokoPay clears it.
+    if (value === "card" || selectedMethods.includes("kokopay")) setChargePercent(0);
     setSelectedMethods(prev => {
       if (prev.includes("kokopay")) return [value];
       if (prev.includes(value)) return prev.length === 1 ? prev : prev.filter(m => m !== value);
       return [...prev, value];
     });
   };
-  const openKokoPayModal = () => {
-    setKokoPayPercentInput(kokoPayPercent > 0 ? String(kokoPayPercent) : "");
-    setShowKokoPayModal(true);
+  const openChargeModal = (method: "card" | "kokopay") => {
+    setChargePercentInput(chargeMethod === method && chargePercent > 0 ? String(chargePercent) : "");
+    setChargeModalMethod(method);
+  };
+  // KokoPay always goes through the % modal. Card does too when it would be
+  // the only method; inside a split it just toggles like Cash/Transfer.
+  const handleMethodClick = (value: SalePaymentMethod) => {
+    if (value === "kokopay") openChargeModal("kokopay");
+    else if (value === "card" && !isSplitMode) openChargeModal("card");
+    else toggleMethod(value);
   };
 
   const handleCheckout = async () => {
@@ -421,19 +455,25 @@ export default function SalesPage() {
     setProcessing(true);
     try {
       // The stored sale (and therefore the printed bill) carries the actual
-      // KokoPay-inflated prices on each line — never the base price plus a
-      // separate fee — so re-opening this invoice later shows exactly what
+      // Card/KokoPay-inflated prices on each line — never the base price plus
+      // a separate fee — so re-opening this invoice later shows exactly what
       // the customer paid per item.
       const saleItems = cart.map(i => {
-        if (kokoMultiplier === 1) return i;
-        const unitPrice = Math.round(i.unitPrice * kokoMultiplier);
+        if (chargeMultiplier === 1) return i;
+        const unitPrice = Math.round(i.unitPrice * chargeMultiplier);
         return { ...i, unitPrice, lineTotal: i.qty * (unitPrice - i.discount) };
       });
       const saleServices = attachedJobServices.map((s) =>
-        s.chargeType === "paid" && kokoMultiplier > 1 ? { ...s, price: Math.round(s.price * kokoMultiplier) } : s
+        s.chargeType === "paid" && chargeMultiplier > 1 ? { ...s, price: Math.round(s.price * chargeMultiplier) } : s
       );
+      const chargeFields = {
+        kokoPayChargePercent: chargeMethod === "kokopay" ? chargePercent : undefined,
+        kokoPayChargeAmount: chargeMethod === "kokopay" ? chargeAmount : undefined,
+        cardChargePercent: chargeMethod === "card" && chargePercent > 0 ? chargePercent : undefined,
+        cardChargeAmount: chargeMethod === "card" && chargePercent > 0 ? chargeAmount : undefined,
+      };
       const payments: SalePaymentSplit[] | undefined = isSplitMode
-        ? selectedMethods.map(m => ({ method: m, amount: Number(splitAmounts[m]) || 0 }))
+        ? selectedMethods.map(m => ({ method: m, amount: legAmount(m) }))
         : undefined;
       // Legacy single-method fields (paymentMethod, amountTendered, changeAmount)
       // still need a value even on a split sale — paymentMethod falls back to
@@ -455,8 +495,7 @@ export default function SalesPage() {
         pointsRedeemed: pointsToRedeem || 0,
         paymentMethod: primaryMethod,
         ...(payments ? { payments } : {}),
-        kokoPayChargePercent: isKokoPay ? kokoPayPercent : undefined,
-        kokoPayChargeAmount: isKokoPay ? kokoPayChargeAmount : undefined,
+        ...chargeFields,
         paymentStatus: "paid",
         amountTendered: isSplitMode ? totalAmount : (Number(amountTendered) || totalAmount),
         changeAmount: isSplitMode ? 0 : Math.max(0, change),
@@ -495,7 +534,7 @@ export default function SalesPage() {
       });
       // Warranties and loyalty-point adjustments are written server-side inside
       // createSale's own transaction, so they can't drift from the sale itself.
-      setCompletedSale({ ...result, items: saleItems, jobNo: attachedJob?.jobNo, services: saleServices, subtotal, discountAmount: discount, pointsRedeemed: pointsToRedeem, totalAmount, customerName: selectedCustomer?.name || attachedJob?.customerName || "Walk-in Customer", customerPhone: selectedCustomer?.phone || attachedJob?.customerPhone, customerEmail: selectedCustomer?.email || attachedJob?.customerEmail, cashierName: userDisplayName || "Cashier", paymentMethod: primaryMethod, payments, kokoPayChargePercent: isKokoPay ? kokoPayPercent : undefined, kokoPayChargeAmount: isKokoPay ? kokoPayChargeAmount : undefined, amountTendered: isSplitMode ? totalAmount : Number(amountTendered), changeAmount: isSplitMode ? 0 : Math.max(0, change) });
+      setCompletedSale({ ...result, items: saleItems, jobNo: attachedJob?.jobNo, services: saleServices, subtotal, discountAmount: discount, pointsRedeemed: pointsToRedeem, totalAmount, customerName: selectedCustomer?.name || attachedJob?.customerName || "Walk-in Customer", customerPhone: selectedCustomer?.phone || attachedJob?.customerPhone, customerEmail: selectedCustomer?.email || attachedJob?.customerEmail, cashierName: userDisplayName || "Cashier", paymentMethod: primaryMethod, payments, ...chargeFields, amountTendered: isSplitMode ? totalAmount : Number(amountTendered), changeAmount: isSplitMode ? 0 : Math.max(0, change) });
       setBillEmailNotice("");
 
       // Fire-and-forget: don't hold up the checkout flow on the alert email.
@@ -696,7 +735,7 @@ export default function SalesPage() {
                   <div key={s.id} className="flex items-center justify-between text-xs">
                     <span className="text-zinc-600">{s.name}{s.chargeType === "free" && s.freeReason ? ` — ${s.freeReason}` : ""}</span>
                     <span className={`font-medium ${s.chargeType === "free" ? "text-green-600" : "text-ink"}`}>
-                      {s.chargeType === "free" ? "Free" : `Rs. ${Math.round(Number(s.price) * kokoMultiplier).toLocaleString()}`}
+                      {s.chargeType === "free" ? "Free" : `Rs. ${Math.round(Number(s.price) * chargeMultiplier).toLocaleString()}`}
                     </span>
                   </div>
                 ))}
@@ -715,7 +754,7 @@ export default function SalesPage() {
           ) : (
             <div className="divide-y divide-zinc-50">
               {cart.map(item => {
-                const displayUnitPrice = Math.round(item.unitPrice * kokoMultiplier);
+                const displayUnitPrice = Math.round(item.unitPrice * chargeMultiplier);
                 const displayLineTotal = item.qty * (displayUnitPrice - item.discount);
                 return (
                 <div key={item.tempId} className="px-4 py-3">
@@ -765,8 +804,8 @@ export default function SalesPage() {
                     />
                     <span className="text-sm font-medium text-ink w-20 text-right">Rs. {displayLineTotal.toLocaleString()}</span>
                   </div>
-                  {kokoMultiplier > 1 && (
-                    <p className="text-[11px] text-zinc-400 mt-1 text-right">Rs. {item.unitPrice.toLocaleString()}/unit + {kokoPayPercent}% KokoPay = Rs. {displayUnitPrice.toLocaleString()}</p>
+                  {chargeMultiplier > 1 && (
+                    <p className="text-[11px] text-zinc-400 mt-1 text-right">Rs. {item.unitPrice.toLocaleString()}/unit + {isSplitCardCharge ? "Card charge share" : `${chargePercent}% ${chargeMethodLabel}`} = Rs. {displayUnitPrice.toLocaleString()}</p>
                   )}
                 </div>
                 );
@@ -823,7 +862,7 @@ export default function SalesPage() {
             {SALE_PAYMENT_METHODS.filter(({ value }) => value !== "kokopay" || !isSplitMode).map(({ value, label }) => (
               <button
                 key={value}
-                onClick={() => (value === "kokopay" ? openKokoPayModal() : toggleMethod(value))}
+                onClick={() => handleMethodClick(value)}
                 className={`py-2 text-xs font-medium rounded border transition-colors ${
                   selectedMethods.includes(value) ? "bg-black text-white border-black" : "border-zinc-200 text-zinc-500 hover:border-black"
                 }`}
@@ -833,17 +872,30 @@ export default function SalesPage() {
             ))}
           </div>
 
-          {isKokoPay && (
+          {chargeMethod && (isKokoPay || chargePercent > 0) && (
             <div className="flex items-center justify-between text-xs bg-zinc-50 rounded px-3 py-2">
-              <span className="text-zinc-500">Item prices above include a {kokoPayPercent}% KokoPay surcharge (Rs. {kokoPayChargeAmount.toLocaleString()}) — staff view only, not shown on the customer's bill</span>
+              <span className="text-zinc-500">
+                {isSplitCardCharge
+                  ? <>Item prices above include a {chargePercent}% Card charge on the card portion only (Rs. {splitCardBase.toLocaleString()} → fee Rs. {chargeAmount.toLocaleString()}) — staff view only, not shown on the customer's bill</>
+                  : <>Item prices above include a {chargePercent}% {chargeMethodLabel} surcharge (Rs. {chargeAmount.toLocaleString()}) — staff view only, not shown on the customer's bill</>}
+              </span>
               <button
                 type="button"
-                onClick={openKokoPayModal}
+                onClick={() => openChargeModal(chargeMethod)}
                 className="underline text-zinc-500 hover:text-black shrink-0 ml-2"
               >
                 Edit %
               </button>
             </div>
+          )}
+          {isSplitMode && chargeMethod === "card" && chargePercent <= 0 && (
+            <button
+              type="button"
+              onClick={() => openChargeModal("card")}
+              className="text-xs underline text-zinc-500 hover:text-black"
+            >
+              + Add card charge %
+            </button>
           )}
 
           {isSplitMode ? (
@@ -851,13 +903,20 @@ export default function SalesPage() {
               {selectedMethods.map(m => (
                 <div key={m} className="flex items-center gap-2">
                   <span className="text-xs font-medium text-zinc-500 w-16 shrink-0">{SALE_PAYMENT_METHOD_LABEL[m]}</span>
-                  <input
-                    type="number"
-                    value={splitAmounts[m] ?? ""}
-                    onChange={e => setSplitAmounts(prev => ({ ...prev, [m]: e.target.value }))}
-                    className="nexora-input flex-1 py-1.5 text-sm"
-                    placeholder="0"
-                  />
+                  {isSplitCardCharge && m === "card" ? (
+                    <div className="flex-1 py-1.5 px-3 text-sm bg-zinc-50 border border-zinc-200 rounded">
+                      Rs. {splitCardLeg.toLocaleString()}
+                      <span className="text-xs text-zinc-400 ml-1">(Rs. {splitCardBase.toLocaleString()} + {chargePercent}% — swipe this)</span>
+                    </div>
+                  ) : (
+                    <input
+                      type="number"
+                      value={splitAmounts[m] ?? ""}
+                      onChange={e => setSplitAmounts(prev => ({ ...prev, [m]: e.target.value }))}
+                      className="nexora-input flex-1 py-1.5 text-sm"
+                      placeholder="0"
+                    />
+                  )}
                 </div>
               ))}
               <p className={`text-xs font-medium text-right ${splitRemaining === 0 ? "text-green-600" : "text-red-600"}`}>
@@ -900,7 +959,7 @@ export default function SalesPage() {
               (cart.length === 0 && !attachedJob) ||
               processing ||
               !currentShift ||
-              (isSplitMode && (splitRemaining !== 0 || selectedMethods.some(m => (Number(splitAmounts[m]) || 0) <= 0)))
+              (isSplitMode && (splitRemaining !== 0 || selectedMethods.some(m => legAmount(m) <= 0)))
             }
             className="nexora-btn nexora-btn-primary w-full justify-center py-3 text-base"
           >
@@ -1143,18 +1202,21 @@ export default function SalesPage() {
         </div>
       )}
 
-      {/* KokoPay charge modal */}
-      {showKokoPayModal && (
+      {/* Card / KokoPay charge modal */}
+      {chargeModalMethod && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
-              <h2 className="font-prata text-base">KokoPay Charge</h2>
-              <button onClick={() => setShowKokoPayModal(false)}><X size={16} className="text-zinc-400" /></button>
+              <h2 className="font-prata text-base">{SALE_PAYMENT_METHOD_LABEL[chargeModalMethod]} Charge</h2>
+              <button onClick={() => setChargeModalMethod(null)}><X size={16} className="text-zinc-400" /></button>
             </div>
             <div className="p-4 space-y-3">
               <div>
                 <label className="text-xs text-zinc-500 mb-1 block">Surcharge percentage (%)</label>
-                <p className="text-xs text-zinc-400 mb-2">Raises every item's own price by this % — the bill won't show a separate KokoPay fee line, just higher item prices.</p>
+                <p className="text-xs text-zinc-400 mb-2">
+                  Raises every item's own price by this % — the bill won't show a separate {SALE_PAYMENT_METHOD_LABEL[chargeModalMethod]} fee line, just higher item prices.
+                  {chargeModalMethod === "card" && " Leave empty or 0 for no card charge."}
+                </p>
                 <input
                   type="number"
                   min={0}
@@ -1162,21 +1224,25 @@ export default function SalesPage() {
                   autoFocus
                   className="nexora-input"
                   placeholder="0"
-                  value={kokoPayPercentInput}
-                  onChange={e => setKokoPayPercentInput(e.target.value)}
+                  value={chargePercentInput}
+                  onChange={e => setChargePercentInput(e.target.value)}
                 />
-                {kokoPayPercentInput !== "" && Number(kokoPayPercentInput) >= 0 && (
+                {chargePercentInput !== "" && Number(chargePercentInput) >= 0 && (
                   <p className="text-xs text-zinc-400 mt-1.5">
-                    Subtotal Rs. {baseSubtotal.toLocaleString()} → Rs. {Math.round(baseSubtotal * (1 + Number(kokoPayPercentInput) / 100)).toLocaleString()}
+                    {chargeModalMethod === "card" && isSplitMode
+                      ? <>Card portion Rs. {splitCardBase.toLocaleString()} → Rs. {Math.round(splitCardBase * (1 + Number(chargePercentInput) / 100)).toLocaleString()} (charged on the card part only)</>
+                      : <>Subtotal Rs. {baseSubtotal.toLocaleString()} → Rs. {Math.round(baseSubtotal * (1 + Number(chargePercentInput) / 100)).toLocaleString()}</>}
                   </p>
                 )}
               </div>
               <button
                 onClick={() => {
-                  const pct = Math.max(0, Number(kokoPayPercentInput) || 0);
-                  setKokoPayPercent(pct);
-                  setSelectedMethods(["kokopay"]);
-                  setShowKokoPayModal(false);
+                  const pct = Math.max(0, Number(chargePercentInput) || 0);
+                  setChargePercent(pct);
+                  // Card inside a split keeps the split; otherwise the method
+                  // becomes the only one.
+                  if (!(chargeModalMethod === "card" && isSplitMode)) setSelectedMethods([chargeModalMethod]);
+                  setChargeModalMethod(null);
                 }}
                 className="nexora-btn nexora-btn-primary w-full justify-center"
               >

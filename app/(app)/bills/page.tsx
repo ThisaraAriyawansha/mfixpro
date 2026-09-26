@@ -14,6 +14,28 @@ import { SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL } from "@/types";
 
 const PAGE_SIZE = 10;
 
+// A sale carries at most one surcharge — KokoPay or Card, never both — and
+// its % is already baked into each item price.
+type ChargeFields = Pick<Sale, "kokoPayChargePercent" | "kokoPayChargeAmount" | "cardChargePercent" | "cardChargeAmount">;
+function saleChargePercent(s: ChargeFields) {
+  return s.kokoPayChargePercent || s.cardChargePercent || 0;
+}
+function saleChargeAmount(s: ChargeFields) {
+  return s.kokoPayChargeAmount || s.cardChargeAmount || 0;
+}
+// On a split sale (e.g. Cash + Card) the card % applied to the card portion
+// only, so the per-item markup isn't the % itself. Deriving it from the
+// stored amounts works for both shapes.
+function saleChargeMultiplier(s: ChargeFields & Pick<Sale, "subtotal">) {
+  const amount = saleChargeAmount(s);
+  if (amount <= 0 || !s.subtotal || s.subtotal <= amount) return 1;
+  return s.subtotal / (s.subtotal - amount);
+}
+function saleChargeLabel(s: ChargeFields & Pick<Sale, "payments">) {
+  if (s.kokoPayChargePercent) return `${s.kokoPayChargePercent}% KokoPay`;
+  return s.payments && s.payments.length > 1 ? "Card charge share" : `${s.cardChargePercent}% Card`;
+}
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -454,7 +476,7 @@ export default function BillsPage() {
                   ) : (
                     <p className="text-sm font-medium">
                       {SALE_PAYMENT_METHOD_LABEL[viewSale.paymentMethod] || viewSale.paymentMethod}
-                      {(viewSale as any).kokoPayChargePercent > 0 && ` (${(viewSale as any).kokoPayChargePercent}% surcharge)`}
+                      {saleChargePercent(viewSale) > 0 && ` (${saleChargePercent(viewSale)}% surcharge)`}
                     </p>
                   )}
                 </div>
@@ -479,9 +501,8 @@ export default function BillsPage() {
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
                   {viewSale.items?.map((item: any, i: number) => {
-                    const kokoPct = (viewSale as any).kokoPayChargePercent;
-                    const kokoMult = kokoPct > 0 ? 1 + kokoPct / 100 : 1;
-                    const basePrice = kokoMult > 1 ? Math.round(item.unitPrice / kokoMult) : null;
+                    const chargeMult = saleChargeMultiplier(viewSale);
+                    const basePrice = chargeMult > 1 ? Math.round(item.unitPrice / chargeMult) : null;
                     return (
                     <tr key={i}>
                       <td className="py-2.5">
@@ -489,7 +510,7 @@ export default function BillsPage() {
                         <p className="text-xs text-zinc-400">{item.sku}</p>
                         {basePrice != null && (
                           <p className="text-xs text-amber-600 mt-0.5">
-                            Rs. {basePrice.toLocaleString()} base + {kokoPct}% KokoPay = Rs. {item.unitPrice.toLocaleString()}/unit
+                            Rs. {basePrice.toLocaleString()} base + {saleChargeLabel(viewSale)} = Rs. {item.unitPrice.toLocaleString()}/unit
                           </p>
                         )}
                       </td>
@@ -500,9 +521,8 @@ export default function BillsPage() {
                     );
                   })}
                   {(viewSale as any).services?.map((s: any, i: number) => {
-                    const kokoPct = (viewSale as any).kokoPayChargePercent;
-                    const kokoMult = kokoPct > 0 ? 1 + kokoPct / 100 : 1;
-                    const baseServicePrice = s.chargeType === "paid" && kokoMult > 1 ? Math.round(Number(s.price) / kokoMult) : null;
+                    const chargeMult = saleChargeMultiplier(viewSale);
+                    const baseServicePrice = s.chargeType === "paid" && chargeMult > 1 ? Math.round(Number(s.price) / chargeMult) : null;
                     return (
                     <tr key={`svc-${i}`}>
                       <td className="py-2.5">
@@ -513,7 +533,7 @@ export default function BillsPage() {
                         </p>
                         {baseServicePrice != null && (
                           <p className="text-xs text-amber-600 mt-0.5">
-                            Rs. {baseServicePrice.toLocaleString()} base + {kokoPct}% KokoPay = Rs. {Number(s.price).toLocaleString()}
+                            Rs. {baseServicePrice.toLocaleString()} base + {saleChargeLabel(viewSale)} = Rs. {Number(s.price).toLocaleString()}
                           </p>
                         )}
                       </td>
@@ -548,9 +568,9 @@ export default function BillsPage() {
                 <div className="flex justify-between font-prata text-lg border-t border-zinc-100 pt-2 mt-2">
                   <span>Total</span><span>Rs. {viewSale.totalAmount?.toLocaleString()}</span>
                 </div>
-                {(viewSale.kokoPayChargeAmount ?? 0) > 0 && (
+                {saleChargeAmount(viewSale) > 0 && (
                   <p className="text-xs text-zinc-400 pt-1">
-                    Staff note: item prices above already include a {viewSale.kokoPayChargePercent}% KokoPay surcharge (Rs. {viewSale.kokoPayChargeAmount?.toLocaleString()}) — not a separate charge on the customer's bill.
+                    Staff note: item prices above already include a {saleChargePercent(viewSale)}% {viewSale.kokoPayChargePercent ? "KokoPay" : "Card"} surcharge{viewSale.cardChargePercent && viewSale.payments && viewSale.payments.length > 1 ? " on the card portion" : ""} (Rs. {saleChargeAmount(viewSale).toLocaleString()}) — not a separate charge on the customer's bill.
                   </p>
                 )}
               </div>

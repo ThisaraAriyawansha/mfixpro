@@ -427,6 +427,8 @@ export interface SaleData {
   payments?: SalePaymentSplit[];
   kokoPayChargePercent?: number;
   kokoPayChargeAmount?: number;
+  cardChargePercent?: number;
+  cardChargeAmount?: number;
   paymentStatus: "paid" | "partial" | "pending";
   amountTendered?: number;
   changeAmount?: number;

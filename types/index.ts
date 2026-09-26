@@ -215,6 +215,10 @@ export interface Sale {
   // attributable to the surcharge.
   kokoPayChargePercent?: number;
   kokoPayChargeAmount?: number;
+  // Same idea for a single-method Card sale with a card surcharge entered at
+  // checkout. Absent when no card % was applied.
+  cardChargePercent?: number;
+  cardChargeAmount?: number;
   paymentStatus: "paid" | "partial" | "pending";
   amountTendered?: number;
   changeAmount?: number;

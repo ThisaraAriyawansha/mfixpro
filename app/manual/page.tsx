@@ -380,6 +380,14 @@ export default function ManualPage() {
                 <>To change the %, press <B>Edit %</B>. KokoPay cannot be combined with another payment method.</>,
               ]} />
             </Sub>
+            <Sub title="Card charge %">
+              <Steps items={[
+                <>Press <B>Card</B>. A box asks for the <b>surcharge %</b> (for example the bank&apos;s card fee). Type it and confirm, or leave it empty for no charge.</>,
+                <>Just like KokoPay, each item price goes up by that % and the bill shows no separate fee line.</>,
+                <>To change it, press <B>Edit %</B> or press <B>Card</B> again.</>,
+                <><b>Part cash, part card</b>: after choosing Card (with its %), also press <B>Cash</B>. Type only the <b>Cash</b> amount. The <b>Card</b> amount fills in by itself: the rest of the bill <b>plus the % on that card part only</b>. Swipe exactly that amount. (No % yet? Press <B>+ Add card charge %</B>.)</>,
+              ]} />
+            </Sub>
             <Sub title="Loyalty points">
               <Bullets items={[
                 <>A customer earns <b>1 point for every Rs. 100</b> spent. Walk-in customers don&apos;t earn points.</>,
