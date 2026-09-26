@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getProducts, getSuppliers, createGrn } from "@/lib/firestore";
 import { useAuth } from "@/hooks/useAuth";
-import { Product, Supplier } from "@/types";
+import { Product, Supplier, StockLocation } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
@@ -28,6 +28,7 @@ export default function NewGrnPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierId, setSupplierId] = useState("");
   const [note, setNote] = useState("");
+  const [location, setLocation] = useState<StockLocation>("stores");
   const [items, setItems] = useState<DraftItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -95,6 +96,7 @@ export default function NewGrnPage() {
         receivedById: user!.uid,
         receivedByName: userDisplayName || user?.email || "Unknown",
         note,
+        location,
         items: items.map((i) => ({
           productId: i.productId,
           productName: i.productName,
@@ -131,9 +133,26 @@ export default function NewGrnPage() {
         <ArrowLeft size={14} /> Back to GRN
       </Link>
       <h1 className="font-prata text-2xl text-ink mb-1">New GRN</h1>
-      <p className="text-zinc-500 text-sm mb-8">Received items are added to Stores Stock.</p>
+      <p className="text-zinc-500 text-sm mb-8">
+        Received items are added to {location === "showroom" ? "Showroom Stock and can be sold right away" : "Stores Stock"}.
+      </p>
 
       <div className="nexora-card p-4 sm:p-6 mb-6 space-y-4">
+        <div>
+          <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Receive Into</label>
+          <div className="grid grid-cols-2 gap-2">
+            {(["stores", "showroom"] as const).map((loc) => (
+              <button
+                key={loc}
+                type="button"
+                onClick={() => setLocation(loc)}
+                className={`nexora-btn justify-center text-sm ${location === loc ? "nexora-btn-primary" : "nexora-btn-outline"}`}
+              >
+                {loc === "stores" ? "Stores" : "Showroom"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Supplier (optional)</label>

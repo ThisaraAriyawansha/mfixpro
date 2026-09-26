@@ -168,6 +168,7 @@ export default function GrnPage() {
             <tr className="border-b border-zinc-100">
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">GRN No.</th>
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Supplier</th>
+              <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Location</th>
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Received By</th>
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Total Cost</th>
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Date</th>
@@ -176,14 +177,15 @@ export default function GrnPage() {
           </thead>
           <tbody className="divide-y divide-zinc-50">
             {loading ? (
-              <tr><td colSpan={6} className="text-center py-10 text-zinc-400">Loading…</td></tr>
+              <tr><td colSpan={7} className="text-center py-10 text-zinc-400">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-10 text-zinc-400">No GRNs found</td></tr>
+              <tr><td colSpan={7} className="text-center py-10 text-zinc-400">No GRNs found</td></tr>
             ) : (
               paginated.map((g) => (
                 <tr key={g.id} className="hover:bg-zinc-50 transition-colors">
                   <td className="px-4 py-3 font-medium text-ink">{g.grnNo}</td>
                   <td className="px-4 py-3 text-zinc-600">{g.supplierName || "—"}</td>
+                  <td className="px-4 py-3 text-zinc-600">{g.location === "showroom" ? "Showroom" : "Stores"}</td>
                   <td className="px-4 py-3 text-zinc-600">{g.receivedByName}</td>
                   <td className="px-4 py-3 font-medium text-ink">Rs. {g.totalCost?.toLocaleString() ?? "—"}</td>
                   <td className="px-4 py-3 text-zinc-500 text-xs">{formatDate(g.createdAt)}</td>

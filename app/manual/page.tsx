@@ -536,7 +536,7 @@ export default function ManualPage() {
               </div>
             </div>
             <Flow steps={[
-              { label: "GRN", note: "Supplier delivers → Stores", color: "bg-zinc-400" },
+              { label: "GRN", note: "Supplier delivers → Stores or Showroom", color: "bg-zinc-400" },
               { label: "Stock Transfer", note: "Stores → Showroom", color: "bg-amber-400" },
               { label: "Sale (POS)", note: "Showroom → Customer", color: "bg-green-500" },
             ]} />

@@ -91,6 +91,7 @@ export async function addProduct(data: {
   mainCategoryId: string;
   subCategoryId: string;
   sku: string;
+  barcode?: string;
   sellingPrice: number;
   totalStock: number;
   description?: string;
@@ -1290,8 +1291,9 @@ export async function getAuditLog(opts?: { collectionName?: string; fromDate?: D
 }
 
 // ─── GRN (GOODS RECEIVED NOTE) ────────────────────────────────────────────────
-// Formal intake of newly purchased stock. Every line item always lands in
-// Stores Stock — items are only sellable via POS once Transferred to Showroom.
+// Formal intake of newly purchased stock. Every line item lands in the GRN's
+// chosen location (Stores by default). Stores items are only sellable via POS
+// once Transferred to Showroom; Showroom items are sellable immediately.
 
 export interface GrnItemData {
   productId: string;
@@ -1310,6 +1312,7 @@ export interface GrnData {
   receivedById: string;
   receivedByName: string;
   note?: string;
+  location?: StockLocation;
   items: GrnItemData[];
 }
 
@@ -1319,6 +1322,7 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
     if (item.sellingPrice != null && item.sellingPrice < 0) throw new Error(`Selling price for "${item.productName}" cannot be negative`);
   }
   const totalCost = data.items.reduce((sum, item) => sum + item.costPrice * (item.serials?.length ?? item.qty), 0);
+  const location: StockLocation = data.location ?? "stores";
 
   return runTransaction(db, async (tx) => {
     const counterRef = doc(db, "counters", "grn");
@@ -1342,6 +1346,7 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
       receivedById: data.receivedById,
       receivedByName: data.receivedByName,
       note: data.note ?? "",
+      location,
       grnNo,
       createdAt: serverTimestamp(),
     });
@@ -1369,7 +1374,7 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
         supplierId: data.supplierId ?? null,
         note: item.note ?? `Received via ${grnNo}`,
         status: "active",
-        location: "stores",
+        location,
         receivedAt: serverTimestamp(),
       });
 
@@ -1381,14 +1386,14 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
           costPrice: item.costPrice,
           sellingPrice: item.sellingPrice ?? null,
           status: "in_stock",
-          location: "stores",
+          location,
           createdAt: serverTimestamp(),
         });
       }
 
       tx.update(doc(db, "products", item.productId), {
         totalStock: increment(qty),
-        storesStock: increment(qty),
+        [location === "showroom" ? "showroomStock" : "storesStock"]: increment(qty),
         lowStockAlerted: false,
       });
 
@@ -1414,7 +1419,7 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
         note: `Received via ${grnNo}`,
         performedBy: data.receivedById,
         performedByName: data.receivedByName,
-        location: "stores",
+        location,
         supplierName: data.supplierName ?? "",
         createdAt: serverTimestamp(),
       });

@@ -44,7 +44,7 @@ export default function ProductsPage() {
 
   const [form, setForm] = useState({
     name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
-    sku: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5",
+    sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5",
     description: "", warrantyMonths: "0", trackSerial: false,
   });
   const [batchForm, setBatchForm] = useState({ costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" });
@@ -82,7 +82,7 @@ export default function ProductsPage() {
 
   const openAdd = () => {
     setEditingProduct(null);
-    setForm({ name: "", brandId: "", mainCategoryId: "", subCategoryId: "", sku: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5", description: "", warrantyMonths: "0", trackSerial: false });
+    setForm({ name: "", brandId: "", mainCategoryId: "", subCategoryId: "", sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5", description: "", warrantyMonths: "0", trackSerial: false });
     setShowModal(true);
   };
 
@@ -90,7 +90,7 @@ export default function ProductsPage() {
     setEditingProduct(p);
     setForm({
       name: p.name, brandId: p.brandId, mainCategoryId: p.mainCategoryId,
-      subCategoryId: p.subCategoryId, sku: p.sku,
+      subCategoryId: p.subCategoryId, sku: p.sku, barcode: p.barcode || "",
       sellingPrice: String(p.sellingPrice), costPrice: "", totalStock: String(p.totalStock),
       lowStockAlert: String(p.lowStockAlert), description: p.description || "",
       warrantyMonths: String(p.warrantyMonths || 0), trackSerial: !!p.trackSerial,
@@ -240,6 +240,7 @@ export default function ProductsPage() {
         mainCategoryId: form.mainCategoryId,
         subCategoryId: form.subCategoryId,
         sku: form.sku,
+        barcode: form.barcode.trim(),
         sellingPrice: Number(form.sellingPrice),
         totalStock: form.trackSerial ? (editingProduct?.totalStock ?? 0) : Number(form.totalStock),
         lowStockAlert: Number(form.lowStockAlert),
@@ -338,7 +339,8 @@ export default function ProductsPage() {
   const filtered = products.filter(p => {
     const matchesSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.sku?.toLowerCase().includes(search.toLowerCase());
+      p.sku?.toLowerCase().includes(search.toLowerCase()) ||
+      p.barcode?.toLowerCase().includes(search.toLowerCase());
     if (!matchesSearch) return false;
     if (filterMainCat && p.mainCategoryId !== filterMainCat) return false;
     if (filterSubCat && p.subCategoryId !== filterSubCat) return false;
@@ -372,7 +374,7 @@ export default function ProductsPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
           <input
             className="nexora-input pl-9"
-            placeholder="Search by name or SKU…"
+            placeholder="Search by name, SKU or barcode…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -503,80 +505,86 @@ export default function ProductsPage() {
       {/* Product Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl w-full max-w-lg lg:max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100">
               <h2 className="font-prata text-lg text-ink">{editingProduct ? "Edit Product" : "Add Product"}</h2>
               <button disabled={saving} onClick={() => setShowModal(false)} className="text-zinc-400 hover:text-ink transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
-              <div>
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-6">
+              <section>
+              <h3 className="text-sm font-medium text-ink mb-3">Product Details</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-4">
+              <div className="sm:col-span-2">
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Product Name</label>
                 <input className="nexora-input" required value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Brand</label>
-                  <select className="nexora-input" required value={form.brandId} onChange={e => setForm({...form, brandId: e.target.value})}>
-                    <option value="">Select brand</option>
-                    {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">SKU</label>
-                  <input className="nexora-input" required value={form.sku} onChange={e => setForm({...form, sku: e.target.value})} />
-                </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Brand</label>
+                <select className="nexora-input" required value={form.brandId} onChange={e => setForm({...form, brandId: e.target.value})}>
+                  <option value="">Select brand</option>
+                  {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Main Category</label>
-                  <select className="nexora-input" required value={form.mainCategoryId} onChange={e => setForm({...form, mainCategoryId: e.target.value, subCategoryId: ""})}>
-                    <option value="">Select</option>
-                    {mainCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Sub Category</label>
-                  <select className="nexora-input" required value={form.subCategoryId} onChange={e => setForm({...form, subCategoryId: e.target.value})}>
-                    <option value="">Select</option>
-                    {filteredSubCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">SKU</label>
+                <input className="nexora-input" required value={form.sku} onChange={e => setForm({...form, sku: e.target.value})} />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Selling Price (Rs.)</label>
-                  <input type="number" className="nexora-input" required value={form.sellingPrice} onChange={e => setForm({...form, sellingPrice: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
-                  {form.trackSerial ? (
-                    <div className="nexora-input flex items-center text-zinc-400 text-sm">
-                      {editingProduct ? `${editingProduct.totalStock} units` : "0 — add via batches"}
-                    </div>
-                  ) : (
-                    <input type="number" className="nexora-input" required value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
-                  )}
-                </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Barcode <span className="normal-case tracking-normal text-zinc-400">(optional)</span></label>
+                <input className="nexora-input" value={form.barcode} placeholder="Scan or type the product barcode" onChange={e => setForm({...form, barcode: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Main Category</label>
+                <select className="nexora-input" required value={form.mainCategoryId} onChange={e => setForm({...form, mainCategoryId: e.target.value, subCategoryId: ""})}>
+                  <option value="">Select</option>
+                  {mainCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Sub Category</label>
+                <select className="nexora-input" required value={form.subCategoryId} onChange={e => setForm({...form, subCategoryId: e.target.value})}>
+                  <option value="">Select</option>
+                  {filteredSubCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              </div>
+              </section>
+
+              <section className="pt-5 border-t border-zinc-100">
+              <h3 className="text-sm font-medium text-ink mb-3">Pricing &amp; Stock</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex gap-x-3 gap-y-4 lg:[&>div]:flex-1 [&>div]:min-w-0">
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Selling Price (Rs.)</label>
+                <input type="number" className="nexora-input" required value={form.sellingPrice} onChange={e => setForm({...form, sellingPrice: e.target.value})} />
               </div>
               {!editingProduct && !form.trackSerial && (
                 <div>
                   <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Cost Price (Rs.)</label>
-                  <input type="number" className="nexora-input" required value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Cost per unit for the first batch" />
+                  <input type="number" className="nexora-input" required value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Per unit" />
                 </div>
               )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Low Stock Alert</label>
-                  <input type="number" className="nexora-input" value={form.lowStockAlert} onChange={e => setForm({...form, lowStockAlert: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Warranty (months)</label>
-                  <input type="number" className="nexora-input" value={form.warrantyMonths} onChange={e => setForm({...form, warrantyMonths: e.target.value})} />
-                </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
+                {form.trackSerial ? (
+                  <div className="nexora-input flex items-center text-zinc-400 text-sm">
+                    {editingProduct ? `${editingProduct.totalStock} units` : "0 — add via batches"}
+                  </div>
+                ) : (
+                  <input type="number" className="nexora-input" required value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
+                )}
               </div>
-              <label className="flex items-start gap-2.5 p-3 rounded-lg border border-zinc-200 cursor-pointer">
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Low Stock Alert</label>
+                <input type="number" className="nexora-input" value={form.lowStockAlert} onChange={e => setForm({...form, lowStockAlert: e.target.value})} />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Warranty (months)</label>
+                <input type="number" className="nexora-input" value={form.warrantyMonths} onChange={e => setForm({...form, warrantyMonths: e.target.value})} />
+              </div>
+              </div>
+              <label className="mt-4 flex items-start gap-2.5 p-3 rounded-lg border border-zinc-200 bg-zinc-50/60 cursor-pointer">
                 <input
                   type="checkbox"
                   className="mt-0.5"
@@ -588,15 +596,18 @@ export default function ProductsPage() {
                   <span className="block text-xs text-zinc-400 mt-0.5">For items like laptops or phones — each unit is stocked in with its own serial, sold individually, and gets its own warranty record.</span>
                 </span>
               </label>
-              <div>
-                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Description</label>
+              </section>
+
+              <section className="pt-5 border-t border-zinc-100">
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Description <span className="normal-case tracking-normal text-zinc-400">(optional)</span></label>
                 <textarea className="nexora-input resize-none" rows={2} value={form.description} onChange={e => setForm({...form, description: e.target.value})} />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="submit" disabled={saving} className="nexora-btn nexora-btn-primary flex-1 justify-center disabled:opacity-60 disabled:cursor-not-allowed">
+              </section>
+
+              <div className="flex gap-3 pt-5 border-t border-zinc-100 sm:justify-end">
+                <button type="button" disabled={saving} onClick={() => setShowModal(false)} className="nexora-btn nexora-btn-outline justify-center sm:min-w-[120px] disabled:opacity-60 disabled:cursor-not-allowed">Cancel</button>
+                <button type="submit" disabled={saving} className="nexora-btn nexora-btn-primary flex-1 sm:flex-none justify-center sm:min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed">
                   {saving ? "Saving…" : editingProduct ? "Update" : "Add Product"}
                 </button>
-                <button type="button" disabled={saving} onClick={() => setShowModal(false)} className="nexora-btn nexora-btn-outline disabled:opacity-60 disabled:cursor-not-allowed">Cancel</button>
               </div>
             </form>
           </div>
@@ -606,19 +617,20 @@ export default function ProductsPage() {
       {/* Batch Modal */}
       {showBatchModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-xl w-full max-w-md lg:max-w-5xl max-h-[90vh] lg:h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 shrink-0">
               <h2 className="font-prata text-lg text-ink">Stock Batches</h2>
               <button onClick={() => { setShowBatchModal(null); setEditingBatchId(null); setBatchError(""); setManageSerialsBatch(null); setEditingBatchUnits([]); setUnitActionError(""); }} className="text-zinc-400 hover:text-ink">
                 <X size={18} />
               </button>
             </div>
-            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+            <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0 lg:py-0 lg:overflow-hidden lg:grid lg:grid-cols-[1fr_380px] lg:grid-rows-[minmax(0,1fr)] lg:gap-6">
               {/* Existing batches */}
+              <div className="lg:min-w-0 lg:min-h-0 lg:overflow-y-auto lg:py-4 lg:pr-1">
               {batches.length === 0 ? (
-                <p className="text-sm text-zinc-400 mb-4">No batches yet</p>
+                <p className="text-sm text-zinc-400 mb-4 lg:mb-0">No batches yet</p>
               ) : (
-                <div className="space-y-2 mb-4 max-h-72 overflow-y-auto">
+                <div className="space-y-2 mb-4 max-h-72 overflow-y-auto lg:mb-0 lg:max-h-none lg:overflow-visible">
                   {batches.map((b, i) =>
                     editingBatchId === b.id ? (
                       <form key={b.id} onSubmit={handleUpdateBatch} className="p-3 bg-zinc-50 rounded-lg space-y-2">
@@ -693,9 +705,10 @@ export default function ProductsPage() {
                   )}
                 </div>
               )}
+              </div>
 
               {/* Add new batch */}
-              <div className="border-t border-zinc-100 pt-4">
+              <div className="border-t border-zinc-100 pt-4 lg:border-t-0 lg:py-4 lg:border-l lg:pl-6 lg:pr-1 lg:min-h-0 lg:overflow-y-auto">
                 <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Add New Batch</p>
                 <p className="text-xs text-zinc-400 mb-3">Goes to Stores Stock — use Stock Transfer to move it to Showroom.</p>
                 <form onSubmit={handleAddBatch} className="space-y-3">

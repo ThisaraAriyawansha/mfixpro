@@ -46,6 +46,7 @@ export interface Product {
   subCategoryId: string;
   subCategoryName?: string;
   sku: string;
+  barcode?: string;
   sellingPrice: number;
   totalStock: number;
   storesStock: number;
@@ -439,6 +440,7 @@ export interface Grn {
   receivedById: string;
   receivedByName: string;
   note?: string;
+  location?: StockLocation;
   createdAt?: any;
 }
 

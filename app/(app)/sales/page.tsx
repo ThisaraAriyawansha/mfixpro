@@ -215,7 +215,7 @@ export default function SalesPage() {
 
   const filteredProducts = products.filter(p => {
     const matchesSearch =
-      p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku?.includes(productSearch);
+      p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku?.includes(productSearch) || p.barcode?.includes(productSearch.trim());
     if (!matchesSearch) return false;
     if (filterMainCat && p.mainCategoryId !== filterMainCat) return false;
     if (filterSubCat && p.subCategoryId !== filterSubCat) return false;
@@ -637,9 +637,22 @@ export default function SalesPage() {
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
               <input
                 className="nexora-input pl-9"
-                placeholder="Search product by name or SKU…"
+                placeholder="Search product by name, SKU or barcode…"
                 value={productSearch}
                 onChange={e => setProductSearch(e.target.value)}
+                onKeyDown={e => {
+                  // Barcode scanners type the code then press Enter — jump
+                  // straight to the exact match instead of making them tap it.
+                  if (e.key !== "Enter") return;
+                  const code = productSearch.trim();
+                  if (!code) return;
+                  const match = products.find(p => p.barcode === code || p.sku === code);
+                  if (match) {
+                    e.preventDefault();
+                    setProductSearch("");
+                    openBatchPicker(match);
+                  }
+                }}
               />
             </div>
             <select
