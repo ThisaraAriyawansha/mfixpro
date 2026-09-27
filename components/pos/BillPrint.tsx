@@ -110,7 +110,10 @@ export default function BillPrint({ sale }: BillPrintProps) {
             <tr key={`svc-${i}`} style={{ breakInside: "avoid", pageBreakInside: "avoid" }}>
               <td style={{ padding: "1.2mm 2mm", fontSize: "9pt", color: "#555" }}>{(sale.items?.length || 0) + i + 1}</td>
               <td style={{ padding: "1.2mm 2mm", fontSize: "10pt", lineHeight: 1.35 }}>
-                <div style={{ fontWeight: "500" }}>{s.name} <span style={{ fontWeight: "400", color: "#888" }}>(Service{sale.jobNo ? ` · ${sale.jobNo}` : ""})</span></div>
+                <div style={{ fontWeight: "500" }}>{s.name} <span style={{ fontWeight: "400", color: "#888" }}>(Service{sale.jobNo && !s.serviceId ? ` · ${sale.jobNo}` : ""})</span></div>
+                {s.fields?.length > 0 && (
+                  <div style={{ fontSize: "7.5pt", color: "#555" }}>{s.fields.map((f: any) => `${f.label}: ${f.value}`).join(" · ")}</div>
+                )}
                 {s.chargeType === "free" && s.freeReason && (
                   <div style={{ fontSize: "7.5pt", color: "#888" }}>Free — {s.freeReason}</div>
                 )}

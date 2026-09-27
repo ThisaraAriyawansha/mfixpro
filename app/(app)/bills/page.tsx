@@ -528,9 +528,12 @@ export default function BillsPage() {
                       <td className="py-2.5">
                         <p className="font-medium text-ink">{s.name}</p>
                         <p className="text-xs text-zinc-400">
-                          Service{(viewSale as any).jobNo ? ` · ${(viewSale as any).jobNo}` : ""}
+                          Service{(viewSale as any).jobNo && !s.serviceId ? ` · ${(viewSale as any).jobNo}` : ""}
                           {s.chargeType === "free" && s.freeReason ? ` · Free — ${s.freeReason}` : ""}
                         </p>
+                        {s.fields?.length > 0 && (
+                          <p className="text-xs text-zinc-500 mt-0.5">{s.fields.map((f: any) => `${f.label}: ${f.value}`).join(" · ")}</p>
+                        )}
                         {baseServicePrice != null && (
                           <p className="text-xs text-amber-600 mt-0.5">
                             Rs. {baseServicePrice.toLocaleString()} base + {saleChargeLabel(viewSale)} = Rs. {Number(s.price).toLocaleString()}

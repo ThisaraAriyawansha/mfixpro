@@ -53,6 +53,9 @@ export type PermissionKey =
   | "brands.delete"
   | "categories.view"
   | "categories.delete"
+  | "services.view"
+  | "services.edit"
+  | "services.delete"
   | "customers.view"
   | "warranty.view";
 
@@ -151,6 +154,10 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
 
   { key: "categories.view", label: "View Categories", module: "Categories", ruleEnforced: false },
   { key: "categories.delete", label: "Delete category (main + sub)", module: "Categories", ruleEnforced: true },
+
+  { key: "services.view", label: "View Services", module: "Services", ruleEnforced: false },
+  { key: "services.edit", label: "Create / edit service", module: "Services", ruleEnforced: true },
+  { key: "services.delete", label: "Delete service", module: "Services", ruleEnforced: true },
 
   { key: "customers.view", label: "View Customers", module: "Customers", ruleEnforced: false },
 

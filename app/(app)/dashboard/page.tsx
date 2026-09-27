@@ -224,8 +224,14 @@ export default function DashboardPage() {
       const n = catName.get(productCat.get(it.productId)) || "Uncategorized";
       byCat.set(n, (byCat.get(n) || 0) + (it.lineTotal || 0));
     }
-    const serviceLines = sum(curSales, (s) => sum(s.services || [], (sv: any) => (sv.chargeType === "paid" ? sv.price : 0)));
-    if (serviceLines > 0) byCat.set("Repair services", (byCat.get("Repair services") || 0) + serviceLines);
+    // Job repair lines vs. quick services picked from the POS Services tab
+    // (those carry a serviceId back to the Services catalog).
+    const paidServices = (s: any, quick: boolean) =>
+      sum(s.services || [], (sv: any) => (sv.chargeType === "paid" && !!sv.serviceId === quick ? sv.price : 0));
+    const repairLines = sum(curSales, (s) => paidServices(s, false));
+    const quickLines = sum(curSales, (s) => paidServices(s, true));
+    if (repairLines > 0) byCat.set("Repair services", (byCat.get("Repair services") || 0) + repairLines);
+    if (quickLines > 0) byCat.set("Quick services", (byCat.get("Quick services") || 0) + quickLines);
     const catTotal = Array.from(byCat.values()).reduce((x, y) => x + y, 0);
     const categories = Array.from(byCat.entries())
       .map(([name, amount]) => ({ name, amount, pct: catTotal ? (amount / catTotal) * 100 : 0 }))

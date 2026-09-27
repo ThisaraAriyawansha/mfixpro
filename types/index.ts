@@ -5,6 +5,31 @@ export interface Brand {
   createdAt?: any;
 }
 
+// A custom input a service collects, e.g. "Model Number" (text) or
+// "Charger received" (checkbox — a plain yes/no tick).
+export type ServiceFieldType = "text" | "number" | "textarea" | "checkbox" | "select" | "date";
+
+export interface ServiceField {
+  id: string;
+  label: string;
+  type: ServiceFieldType;
+  required: boolean;
+  placeholder?: string;
+  /** Choices for a "select" field. */
+  options?: string[];
+}
+
+export interface Service {
+  id: string;
+  name: string;
+  defaultPrice: number;
+  description?: string;
+  customFields: ServiceField[];
+  active: boolean;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export interface MainCategory {
   id: string;
   name: string;
@@ -509,12 +534,17 @@ export type JobServiceChargeType = "paid" | "free";
 
 // A single billable line on a job — e.g. "Replace SSD" (paid) or
 // "Install OS" (free, with a reason like Warranty/Loyalty/Goodwill).
+// A sale's `services` array also carries quick services picked from the POS
+// Services tab — those have `serviceId` set (the Services catalog entry) and
+// `fields` holding the custom-field answers entered at the counter.
 export interface JobServiceItem {
   id: string;
   name: string;
   price: number;
   chargeType: JobServiceChargeType;
   freeReason?: string;
+  serviceId?: string;
+  fields?: { label: string; value: string }[];
 }
 
 // An internal part recorded at intake (e.g. RAM 8GB DDR4, SSD 512GB + its

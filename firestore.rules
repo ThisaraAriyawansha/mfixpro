@@ -149,6 +149,7 @@ service cloud.firestore {
     }
 
     match /brands/{id}          { allow read: if isAuth(); allow create, update: if isAuth(); allow delete: if hasPerm('brands.delete'); }
+    match /services/{id}        { allow read: if isAuth(); allow create, update: if hasPerm('services.edit'); allow delete: if hasPerm('services.delete'); }
     match /main_categories/{id} { allow read: if isAuth(); allow create, update: if isAuth(); allow delete: if hasPerm('categories.delete'); }
     match /sub_categories/{id}  { allow read: if isAuth(); allow create, update: if isAuth(); allow delete: if hasPerm('categories.delete'); }
     match /suppliers/{id}       { allow read: if isAuth(); allow create: if isAuth(); allow update: if hasPermDefaultTrue('suppliers.editContact'); allow delete: if isAdminOrAbove(); }

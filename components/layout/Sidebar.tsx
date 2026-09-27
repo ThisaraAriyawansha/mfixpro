@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Package, Layers, BookMarked,
   ShoppingCart, Receipt, Shield, Settings, LogOut, X,
   Users, FileText, Wrench, PackagePlus, ArrowLeftRight, PackageMinus, History,
-  Truck, ShieldCheck, Wallet, Banknote, Boxes, ChevronDown,
+  Truck, ShieldCheck, Wallet, Banknote, Boxes, ChevronDown, Hammer,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -21,6 +21,7 @@ const nav: NavEntry[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, permKey: "dashboard.view" },
   { label: "POS / New Sale", href: "/sales", icon: ShoppingCart, permKey: "sales.view" },
   { label: "Jobs", href: "/jobs", icon: Wrench, permKey: "jobs.view" },
+  { label: "Services", href: "/services", icon: Hammer, permKey: "services.view" },
   {
     label: "Sales",
     icon: Receipt,

@@ -8,7 +8,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { db } from "./firebase";
 import { firebaseConfig } from "./firebase";
-import type { ShopSettings, UserProfile, JobStatus, JobServiceItem, JobDevicePart,StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
+import type { Service, ShopSettings, UserProfile,JobStatus, JobServiceItem, JobDevicePart,StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
 import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
 import { isEditableRole, getDefaultPermissions, PERMISSION_CATALOG } from "./permissions";
@@ -30,6 +30,25 @@ export async function updateBrand(id: string, data: Partial<{ name: string; desc
 
 export async function deleteBrand(id: string) {
   return deleteDoc(doc(db, "brands", id));
+}
+
+// ─── SERVICES ─────────────────────────────────────────────────────────────────
+
+export async function getServices() {
+  const snap = await getDocs(query(collection(db, "services"), orderBy("name")));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function addService(data: Omit<Service, "id" | "createdAt" | "updatedAt">) {
+  return addDoc(collection(db, "services"), { ...data, createdAt: serverTimestamp() });
+}
+
+export async function updateService(id: string, data: Partial<Omit<Service, "id" | "createdAt" | "updatedAt">>) {
+  return updateDoc(doc(db, "services", id), { ...data, updatedAt: serverTimestamp() });
+}
+
+export async function deleteService(id: string) {
+  return deleteDoc(doc(db, "services", id));
 }
 
 // ─── MAIN CATEGORIES ──────────────────────────────────────────────────────────
@@ -2647,6 +2666,7 @@ export async function getUsageStats(): Promise<CollectionStat[]> {
     { key: "suppliers",       label: "Suppliers",        avgBytes: 350  },
     { key: "main_categories", label: "Main Categories",  avgBytes: 200  },
     { key: "brands",          label: "Brands",           avgBytes: 200  },
+    { key: "services",        label: "Services",         avgBytes: 500  },
     { key: "auditLog",        label: "Audit Log",        avgBytes: 400  },
     { key: "grns",            label: "GRNs",             avgBytes: 700  },
     { key: "stockTransfers",  label: "Stock Transfers",  avgBytes: 600  },

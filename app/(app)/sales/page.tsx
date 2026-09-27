@@ -1,14 +1,28 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { getProducts, getCustomers, addCustomer, createSale, getBatches, getAvailableUnits, getMainCategories, getSubCategories, getCurrentOpenShift, openShift, closeShift, getJobs, updateJobStatus } from "@/lib/firestore";
-import { Product, Customer, CartItem, MainCategory, SubCategory, Shift, SalePaymentMethod, SalePaymentSplit, SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL, jobServicesTotal, jobBillableServices } from "@/types";
-import { Search, Plus, Minus, Trash2, Printer, User, X, Check, Download, Mail, Wallet, Lock, Wrench } from "lucide-react";
+import { getProducts, getCustomers, addCustomer, createSale, getBatches, getAvailableUnits, getMainCategories, getSubCategories, getCurrentOpenShift, openShift, closeShift, getJobs, updateJobStatus, getServices } from "@/lib/firestore";
+import { Product, Customer, CartItem, MainCategory, SubCategory, Shift, SalePaymentMethod, SalePaymentSplit, SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL, jobServicesTotal, jobBillableServices, Service, JobServiceItem } from "@/types";
+import { Search, Plus, Minus, Trash2, Printer, User, X, Check, Download, Mail, Wallet, Lock, Wrench, Package, Hammer, Edit2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import BillPrint from "@/components/pos/BillPrint";
 import { useReactToPrint } from "react-to-print";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { downloadElementAsPdf, getElementPdfBase64 } from "@/lib/pdf";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+
+// A quick service on the bill. `service` (a snapshot of the catalog entry)
+// and `values` (raw inputs keyed by field id) let the line be reopened and
+// edited even if the service is changed or removed meanwhile; both are
+// stripped before the sale is saved — `fields` is the printable copy.
+type PosServiceLine = JobServiceItem & { service: Service; values: Record<string, string | boolean> };
+
+type ServiceModalState = {
+  service: Service;
+  editingId: string | null;
+  price: string;
+  values: Record<string, string | boolean>;
+  error: string;
+};
 
 export default function SalesPage() {
   const { user, userDisplayName, can } = useAuth();
@@ -58,6 +72,14 @@ export default function SalesPage() {
   const [attachedJob, setAttachedJob] = useState<any | null>(null);
   const [showJobPicker, setShowJobPicker] = useState(false);
   const [jobSearch, setJobSearch] = useState("");
+
+  // Quick services (Services tab) — short fixes billed on the spot, alongside
+  // any products and an attached job on the same bill.
+  const [catalogTab, setCatalogTab] = useState<"products" | "services">("products");
+  const [services, setServices] = useState<Service[]>([]);
+  const [serviceSearch, setServiceSearch] = useState("");
+  const [serviceLines, setServiceLines] = useState<PosServiceLine[]>([]);
+  const [serviceModal, setServiceModal] = useState<ServiceModalState | null>(null);
 
   const [downloadingBill, setDownloadingBill] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
@@ -122,7 +144,13 @@ export default function SalesPage() {
 
   useEffect(() => {
     async function load() {
-      const [p, c, mc, sc, j] = await Promise.all([getProducts(), getCustomers(), getMainCategories(), getSubCategories(), getJobs()]);
+      // A failed services read (e.g. rules not deployed yet) must not take
+      // the whole POS down with it — products/jobs still load, the tab is empty.
+      const [p, c, mc, sc, j, sv] = await Promise.all([
+        getProducts(), getCustomers(), getMainCategories(), getSubCategories(), getJobs(),
+        getServices().catch((err) => { console.error("Failed to load services:", err); return []; }),
+      ]);
+      setServices((sv as Service[]).filter(s => s.active !== false));
       // POS only sells from Showroom Stock — items with stock only in Stores
       // must be Transferred to Showroom first.
       setProducts(p.filter((p: any) => p.active && p.showroomStock > 0) as Product[]);
@@ -245,6 +273,70 @@ export default function SalesPage() {
   };
 
   const detachJob = () => setAttachedJob(null);
+
+  const filteredServices = services.filter(s => {
+    const q = serviceSearch.trim().toLowerCase();
+    return !q || s.name.toLowerCase().includes(q) || (s.description || "").toLowerCase().includes(q);
+  });
+
+  const openServiceModal = (service: Service, line?: PosServiceLine) => {
+    const values: Record<string, string | boolean> = {};
+    for (const f of service.customFields || []) values[f.id] = line?.values[f.id] ?? (f.type === "checkbox" ? false : "");
+    setServiceModal({
+      service,
+      editingId: line?.id ?? null,
+      price: String(line ? line.price : service.defaultPrice ?? 0),
+      values,
+      error: "",
+    });
+  };
+
+  const editServiceLine = (line: PosServiceLine) => openServiceModal(line.service, line);
+
+  const saveServiceLine = () => {
+    if (!serviceModal) return;
+    const { service, editingId, values } = serviceModal;
+    const price = Number(serviceModal.price);
+    if (serviceModal.price === "" || isNaN(price) || price < 0) {
+      setServiceModal({ ...serviceModal, error: "Enter a valid price." });
+      return;
+    }
+    const fields: { label: string; value: string }[] = [];
+    for (const f of service.customFields || []) {
+      const v = values[f.id];
+      if (f.type === "checkbox") {
+        if (f.required && !v) {
+          setServiceModal({ ...serviceModal, error: `"${f.label}" must be ticked.` });
+          return;
+        }
+        fields.push({ label: f.label, value: v ? "Yes" : "No" });
+        continue;
+      }
+      const text = String(v ?? "").trim();
+      if (!text) {
+        if (f.required) {
+          setServiceModal({ ...serviceModal, error: `"${f.label}" is required.` });
+          return;
+        }
+        continue;
+      }
+      fields.push({ label: f.label, value: text });
+    }
+    const line: PosServiceLine = {
+      id: editingId ?? `svc-${Date.now()}`,
+      serviceId: service.id,
+      name: service.name,
+      price,
+      chargeType: "paid",
+      fields,
+      service,
+      values,
+    };
+    setServiceLines(prev => editingId ? prev.map(l => (l.id === editingId ? line : l)) : [...prev, line]);
+    setServiceModal(null);
+  };
+
+  const removeServiceLine = (id: string) => setServiceLines(prev => prev.filter(l => l.id !== id));
 
   const openBatchPicker = async (product: Product) => {
     if (product.trackSerial) {
@@ -396,8 +488,9 @@ export default function SalesPage() {
   const isSplitCardCharge = isSplitMode && chargeMethod === "card" && chargePercent > 0;
   const attachedJobServices = jobBillableServices(attachedJob);
   const baseJobServicesAmount = jobServicesTotal(attachedJobServices);
+  const baseQuickServicesAmount = serviceLines.reduce((s, l) => s + l.price, 0);
   const baseCartSubtotal = cart.reduce((s, i) => s + i.lineTotal, 0);
-  const baseSubtotal = baseCartSubtotal + baseJobServicesAmount;
+  const baseSubtotal = baseCartSubtotal + baseJobServicesAmount + baseQuickServicesAmount;
   const otherLegsTotal = selectedMethods.filter(m => m !== "card").reduce((s, m) => s + (Number(splitAmounts[m]) || 0), 0);
   // Card portion before its fee = what's left of the (pre-surcharge) bill
   // after the cash/transfer legs.
@@ -413,7 +506,9 @@ export default function SalesPage() {
     const unitPrice = Math.round(i.unitPrice * chargeMultiplier);
     return s + i.qty * (unitPrice - i.discount);
   }, 0);
-  const subtotal = cartSubtotal + jobServicesAmount;
+  const quickServicesAmount = serviceLines.reduce((s, l) => s + Math.round(l.price * chargeMultiplier), 0);
+  const subtotal = cartSubtotal + jobServicesAmount + quickServicesAmount;
+  const hasBillLines = cart.length > 0 || serviceLines.length > 0 || !!attachedJob;
   const totalAmount = Math.max(0, subtotal - discount - pointsToRedeem);
   const chargeAmount = chargeMultiplier > 1 ? Math.max(0, subtotal - baseSubtotal) : 0;
   const change = Number(amountTendered) - totalAmount;
@@ -447,7 +542,7 @@ export default function SalesPage() {
   };
 
   const handleCheckout = async () => {
-    if (cart.length === 0 && !attachedJob) return;
+    if (!hasBillLines) return;
     if (!currentShift) {
       alert("No open shift — open a shift before selling.");
       return;
@@ -463,9 +558,16 @@ export default function SalesPage() {
         const unitPrice = Math.round(i.unitPrice * chargeMultiplier);
         return { ...i, unitPrice, lineTotal: i.qty * (unitPrice - i.discount) };
       });
-      const saleServices = attachedJobServices.map((s) =>
-        s.chargeType === "paid" && chargeMultiplier > 1 ? { ...s, price: Math.round(s.price * chargeMultiplier) } : s
-      );
+      const quickServices: JobServiceItem[] = serviceLines.map(({ values, service, ...l }) => ({
+        ...l,
+        price: Math.round(l.price * chargeMultiplier),
+      }));
+      const saleServices = [
+        ...attachedJobServices.map((s) =>
+          s.chargeType === "paid" && chargeMultiplier > 1 ? { ...s, price: Math.round(s.price * chargeMultiplier) } : s
+        ),
+        ...quickServices,
+      ];
       const chargeFields = {
         kokoPayChargePercent: chargeMethod === "kokopay" ? chargePercent : undefined,
         kokoPayChargeAmount: chargeMethod === "kokopay" ? chargeAmount : undefined,
@@ -487,7 +589,8 @@ export default function SalesPage() {
         cashierId: user!.uid,
         cashierName: userDisplayName || "Cashier",
         items: saleItems,
-        ...(attachedJob ? { jobId: attachedJob.id, jobNo: attachedJob.jobNo, services: saleServices } : {}),
+        ...(attachedJob ? { jobId: attachedJob.id, jobNo: attachedJob.jobNo } : {}),
+        ...(saleServices.length > 0 ? { services: saleServices } : {}),
         subtotal,
         discountAmount: discount,
         taxAmount: 0,
@@ -557,6 +660,7 @@ export default function SalesPage() {
           : p)
         .filter(p => p.showroomStock > 0));
       setCart([]);
+      setServiceLines([]);
       setDiscount(0);
       setPointsToRedeem(0);
       setSelectedCustomer(null);
@@ -632,6 +736,47 @@ export default function SalesPage() {
               )}
             </div>
           </div>
+          {/* Products / Services tabs */}
+          <div className="flex gap-1 mb-3 border-b border-zinc-100 -mx-4 sm:-mx-6 px-4 sm:px-6">
+            {([
+              { key: "products", label: "Products", icon: Package, count: products.length },
+              { key: "services", label: "Services", icon: Hammer, count: services.length },
+            ] as const).map(t => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setCatalogTab(t.key)}
+                className={`flex items-center gap-1.5 px-3 py-2 -mb-px text-sm border-b-2 transition-colors ${
+                  catalogTab === t.key ? "border-brand text-brand font-medium" : "border-transparent text-zinc-500 hover:text-ink"
+                }`}
+              >
+                <t.icon size={14} /> {t.label}
+                <span className={`text-[10px] rounded-full px-1.5 py-0.5 ${catalogTab === t.key ? "bg-brand-light text-brand" : "bg-zinc-100 text-zinc-500"}`}>{t.count}</span>
+              </button>
+            ))}
+          </div>
+          {catalogTab === "services" ? (
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+              <input
+                className="nexora-input pl-9"
+                placeholder="Search service by name…"
+                value={serviceSearch}
+                onChange={e => setServiceSearch(e.target.value)}
+                onKeyDown={e => {
+                  // A barcode scanned while on this tab is still a product.
+                  if (e.key !== "Enter") return;
+                  const code = serviceSearch.trim();
+                  const match = code ? products.find(p => p.barcode === code || p.sku === code) : null;
+                  if (match) {
+                    e.preventDefault();
+                    setServiceSearch("");
+                    openBatchPicker(match);
+                  }
+                }}
+              />
+            </div>
+          ) : (
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[200px]">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -681,7 +826,36 @@ export default function SalesPage() {
               </button>
             )}
           </div>
+          )}
         </div>
+        {catalogTab === "services" ? (
+        <div className="lg:flex-1 lg:overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
+          {filteredServices.map(s => {
+            const inBill = serviceLines.filter(l => l.serviceId === s.id).length;
+            return (
+              <button
+                key={s.id}
+                onClick={() => openServiceModal(s)}
+                className="nexora-card p-3 text-left hover:border-black transition-colors group"
+              >
+                <p className="text-sm font-medium text-ink group-hover:underline">{s.name}</p>
+                <p className="text-xs text-zinc-400 mt-0.5 truncate">
+                  {s.description || ((s.customFields || []).length > 0 ? (s.customFields || []).map(f => f.label).join(" · ") : "Service")}
+                </p>
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-sm font-medium">Rs. {Number(s.defaultPrice || 0).toLocaleString()}</span>
+                  {inBill > 0 && <span className="badge badge-success">{inBill} in bill</span>}
+                </div>
+              </button>
+            );
+          })}
+          {filteredServices.length === 0 && (
+            <p className="col-span-2 sm:col-span-3 xl:col-span-4 text-center py-12 text-sm text-zinc-400">
+              {services.length === 0 ? "No active services — add them from the Services page." : "No services found"}
+            </p>
+          )}
+        </div>
+        ) : (
         <div className="lg:flex-1 lg:overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
           {filteredProducts.map(p => (
             <button
@@ -701,6 +875,7 @@ export default function SalesPage() {
             <p className="col-span-2 sm:col-span-3 xl:col-span-4 text-center py-12 text-sm text-zinc-400">No products found</p>
           )}
         </div>
+        )}
       </div>
 
       {/* Right: Cart */}
@@ -759,11 +934,47 @@ export default function SalesPage() {
 
         {/* Cart items */}
         <div className="lg:flex-1 lg:overflow-y-auto">
+          {serviceLines.length > 0 && (
+            <div className="divide-y divide-zinc-50 border-b border-zinc-100">
+              {serviceLines.map(line => (
+                <div key={line.id} className="px-4 py-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-ink flex items-center gap-1.5">
+                        <Hammer size={12} className="text-zinc-400 shrink-0" /> {line.name}
+                      </p>
+                      {(line.fields || []).length > 0 && (
+                        <p className="text-xs text-zinc-400 mt-0.5">
+                          {(line.fields || []).map(f => `${f.label}: ${f.value}`).join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-sm font-medium text-ink whitespace-nowrap">
+                      Rs. {Math.round(line.price * chargeMultiplier).toLocaleString()}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={() => editServiceLine(line)} className="text-zinc-300 hover:text-ink transition-colors" title="Edit price / details">
+                        <Edit2 size={12} />
+                      </button>
+                      <button onClick={() => removeServiceLine(line.id)} className="text-zinc-300 hover:text-red-500 transition-colors" title="Remove">
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </div>
+                  {chargeMultiplier > 1 && (
+                    <p className="text-[11px] text-zinc-400 mt-1 text-right">Rs. {line.price.toLocaleString()} + {isSplitCardCharge ? "Card charge share" : `${chargePercent}% ${chargeMethodLabel}`}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {cart.length === 0 ? (
+            serviceLines.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-zinc-300 py-6">
               <p className="text-sm">{attachedJob ? "No products added" : "Cart is empty"}</p>
-              <p className="text-xs mt-1">Tap a product to add</p>
+              <p className="text-xs mt-1">Tap a product or service to add</p>
             </div>
+            )
           ) : (
             <div className="divide-y divide-zinc-50">
               {cart.map(item => {
@@ -951,7 +1162,7 @@ export default function SalesPage() {
             </div>
           )}
 
-          {selectedCustomer && cart.length > 0 && (
+          {selectedCustomer && hasBillLines && (
             <div className="flex items-center justify-between text-xs text-zinc-400 bg-zinc-50 rounded px-3 py-2">
               <span>Points after this sale</span>
               <span className="font-medium text-zinc-600">
@@ -969,7 +1180,7 @@ export default function SalesPage() {
           <button
             onClick={handleCheckout}
             disabled={
-              (cart.length === 0 && !attachedJob) ||
+              !hasBillLines ||
               processing ||
               !currentShift ||
               (isSplitMode && (splitRemaining !== 0 || selectedMethods.some(m => legAmount(m) <= 0)))
@@ -1111,6 +1322,89 @@ export default function SalesPage() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Service modal — price (pre-filled from the service's default, can be
+          changed) plus the service's custom fields */}
+      {serviceModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 shrink-0">
+              <div>
+                <h2 className="font-prata text-base">{serviceModal.service.name}</h2>
+                {serviceModal.service.description && <p className="text-xs text-zinc-400">{serviceModal.service.description}</p>}
+              </div>
+              <button onClick={() => setServiceModal(null)}><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <form
+              onSubmit={e => { e.preventDefault(); saveServiceLine(); }}
+              className="flex-1 min-h-0 flex flex-col"
+            >
+              <div className="p-4 space-y-3 overflow-y-auto">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs text-zinc-500">Price (Rs.)</label>
+                    {Number(serviceModal.price) !== Number(serviceModal.service.defaultPrice) && (
+                      <button
+                        type="button"
+                        onClick={() => setServiceModal({ ...serviceModal, price: String(serviceModal.service.defaultPrice ?? 0) })}
+                        className="text-xs text-zinc-400 underline hover:text-ink"
+                      >
+                        Reset to Rs. {Number(serviceModal.service.defaultPrice || 0).toLocaleString()}
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    className="nexora-input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    autoFocus
+                    value={serviceModal.price}
+                    onChange={e => setServiceModal({ ...serviceModal, price: e.target.value, error: "" })}
+                  />
+                </div>
+
+                {(serviceModal.service.customFields || []).map(f => {
+                  const value = serviceModal.values[f.id];
+                  const setValue = (v: string | boolean) =>
+                    setServiceModal({ ...serviceModal, values: { ...serviceModal.values, [f.id]: v }, error: "" });
+                  const label = <>{f.label}{f.required && <span className="text-brand"> *</span>}</>;
+
+                  if (f.type === "checkbox") {
+                    return (
+                      <label key={f.id} className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer py-1">
+                        <input type="checkbox" className="accent-brand w-4 h-4" checked={!!value} onChange={e => setValue(e.target.checked)} />
+                        <span>{label}</span>
+                      </label>
+                    );
+                  }
+                  return (
+                    <div key={f.id}>
+                      <label className="block text-xs text-zinc-500 mb-1">{label}</label>
+                      {f.type === "textarea" ? (
+                        <textarea className="nexora-input" rows={2} placeholder={f.placeholder} value={String(value ?? "")} onChange={e => setValue(e.target.value)} />
+                      ) : f.type === "select" ? (
+                        <select className="nexora-input" value={String(value ?? "")} onChange={e => setValue(e.target.value)}>
+                          <option value="">Select…</option>
+                          {(f.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      ) : (
+                        <input className="nexora-input" type={f.type} placeholder={f.placeholder} value={String(value ?? "")} onChange={e => setValue(e.target.value)} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-3 border-t border-zinc-100 shrink-0">
+                {serviceModal.error && <p className="text-xs text-red-500 mb-2">{serviceModal.error}</p>}
+                <button type="submit" className="nexora-btn nexora-btn-primary w-full justify-center">
+                  {serviceModal.editingId ? "Update" : "Add to Bill"} — Rs. {(Number(serviceModal.price) || 0).toLocaleString()}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
