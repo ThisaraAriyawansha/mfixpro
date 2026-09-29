@@ -12,6 +12,7 @@ import { firebaseConfig } from "./firebase";
 import type { Service, ShopSettings, UserProfile,JobStatus, JobServiceItem, JobDevicePart,StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
 import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
+import { dateInputValue } from "./dates";
 import { isEditableRole, getDefaultPermissions, PERMISSION_CATALOG } from "./permissions";
 
 // Date-range filter on createdAt, newest first. List pages pass a default
@@ -782,6 +783,9 @@ export async function createSale(data: SaleData) {
     }));
     const saleDate = new Date();
 
+    // Dashboard daily summary, in the same transaction as the sale itself.
+    applySaleStats(tx, statsDayKey(saleDate), saleStatsContribution(data, itemsWithCost, saleDate));
+
     data.items.forEach((item, i) => {
       tx.update(doc(db, "products", item.productId), {
         totalStock: increment(-item.qty),
@@ -916,6 +920,170 @@ export async function getSalesStats() {
   return snap.exists() ? (snap.data() as { totalSalesCount: number; totalRevenue: number }) : { totalSalesCount: 0, totalRevenue: 0 };
 }
 
+// ─── DAILY SALES STATS ────────────────────────────────────────────────────────
+// One doc per shop day — counters/day_YYYY-MM-DD (local date) — holding that
+// day's sales totals plus the breakdowns the Dashboard charts need (by hour,
+// product, payment method, staff, customer). createSale/cancelSale/
+// adminUpdateSale keep it in step inside their own transactions, so the
+// Dashboard reads ~60 small docs instead of every sale + saleItem in the
+// window. Kept under `counters` so the existing security rules cover it.
+
+export type StatsNode = { [k: string]: number | string | StatsNode };
+
+type StatsSale = Pick<
+  SaleData,
+  "customerId" | "customerName" | "cashierId" | "cashierName" | "jobId" | "services" | "totalAmount" | "paymentMethod" | "payments"
+>;
+type StatsItem = { productId?: string; productName?: string; qty?: number; lineTotal?: number; costPrice?: number };
+
+export function statsDayKey(d: Date) {
+  return dateInputValue(d);
+}
+
+const statsDocRef = (key: string) => doc(db, "counters", `day_${key}`);
+const STATS_META_REF = () => doc(db, "counters", "dailyStatsMeta");
+
+// Map keys: Firestore ids where there is one, otherwise the name prefixed so
+// it can never be empty or look like a reserved __field__.
+function statsKey(id: string | null | undefined, name: string | undefined, fallback: string) {
+  return id || `n_${(name || "").trim() || fallback}`;
+}
+
+// What one sale adds to its day (plain numbers). Items carry the real FIFO
+// cost price, so cogs matches what the Dashboard used to compute from saleItems.
+function saleStatsContribution(sale: StatsSale, items: StatsItem[], when: Date): StatsNode {
+  const total = sale.totalAmount || 0;
+  const paidServices = (quick: boolean) =>
+    (sale.services || []).reduce((t, sv) => t + (sv.chargeType === "paid" && !!sv.serviceId === quick ? sv.price || 0 : 0), 0);
+
+  const byMethod: StatsNode = {};
+  for (const sp of salePaymentSplits(sale as any)) {
+    const m = sp.method || "other";
+    byMethod[m] = ((byMethod[m] as number) || 0) + (sp.amount || 0);
+  }
+
+  const byProduct: StatsNode = {};
+  for (const it of items) {
+    const k = statsKey(it.productId, it.productName, "item");
+    const e = (byProduct[k] as StatsNode) || { productId: it.productId || "", name: it.productName || "", qty: 0, revenue: 0, cost: 0 };
+    e.qty = (e.qty as number) + (it.qty || 0);
+    e.revenue = (e.revenue as number) + (it.lineTotal || 0);
+    e.cost = (e.cost as number) + (it.costPrice || 0) * (it.qty || 0);
+    byProduct[k] = e;
+  }
+
+  const node: StatsNode = {
+    revenue: total,
+    cogs: items.reduce((t, it) => t + (it.costPrice || 0) * (it.qty || 0), 0),
+    orders: 1,
+    itemsSold: items.reduce((t, it) => t + (it.qty || 0), 0),
+    repairRevenue: sale.jobId ? total : 0,
+    repairLines: paidServices(false),
+    quickLines: paidServices(true),
+    walkIns: !sale.customerId && !sale.customerName ? 1 : 0,
+    byHour: { [`h${when.getHours()}`]: { revenue: total, count: 1 } },
+    byMethod,
+    byProduct,
+    byStaff: {
+      [statsKey(sale.cashierId, sale.cashierName, "staff")]: { name: sale.cashierName || "Unknown", revenue: total, count: 1 },
+    },
+  };
+  if (sale.customerId || sale.customerName) {
+    node.byCustomer = {
+      [statsKey(sale.customerId, sale.customerName, "customer")]: { name: sale.customerName || "Customer", spend: total, visits: 1 },
+    };
+  }
+  return node;
+}
+
+// target += src * sign (numbers added, labels copied, maps merged).
+function addStats(target: StatsNode, src: StatsNode, sign = 1) {
+  for (const [k, v] of Object.entries(src)) {
+    if (typeof v === "number") target[k] = ((target[k] as number) || 0) + v * sign;
+    else if (typeof v === "string") target[k] = v;
+    else {
+      if (typeof target[k] !== "object") target[k] = {};
+      addStats(target[k] as StatsNode, v, sign);
+    }
+  }
+  return target;
+}
+
+// Same shape with every number turned into increment(n) — for set(..., {merge}).
+function toIncrements(src: StatsNode): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(src)) {
+    out[k] = typeof v === "number" ? increment(v) : typeof v === "string" ? v : toIncrements(v);
+  }
+  return out;
+}
+
+function applySaleStats(tx: any, key: string, delta: StatsNode) {
+  tx.set(statsDocRef(key), { date: key, ...toIncrements(delta) }, { merge: true });
+}
+
+// Day docs built in memory from raw sales + saleItems (cancelled sales excluded).
+export function buildDailyStats(sales: any[], saleItems: any[]) {
+  const itemsBySale = new Map<string, any[]>();
+  for (const it of saleItems) {
+    const list = itemsBySale.get(it.saleId) || [];
+    list.push(it);
+    itemsBySale.set(it.saleId, list);
+  }
+  const days: Record<string, StatsNode> = {};
+  for (const s of sales) {
+    if (s.status === "cancelled") continue;
+    const when: Date | undefined = s.createdAt?.toDate?.();
+    if (!when) continue;
+    const key = statsDayKey(when);
+    addStats((days[key] ||= { date: key }), saleStatsContribution(s, itemsBySale.get(s.id) || [], when));
+  }
+  return days;
+}
+
+export async function getRecentSales(max = 12) {
+  const snap = await getDocs(query(collection(db, "sales"), orderBy("createdAt", "desc"), limit(max)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Bills not fully paid — normally a handful, so no date range needed.
+export async function getUnsettledSales() {
+  const snap = await getDocs(query(collection(db, "sales"), where("paymentStatus", "in", ["partial", "pending"])));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as any).filter((s) => s.status !== "cancelled");
+}
+
+export async function getDailyStatsMeta() {
+  const snap = await getDoc(STATS_META_REF());
+  return snap.exists() ? (snap.data() as { builtFrom: string }) : null;
+}
+
+// Only day docs carry a `date` field, so this range skips the other counters.
+export async function getDailyStats(fromDate: Date) {
+  const snap = await getDocs(query(collection(db, "counters"), where("date", ">=", statsDayKey(fromDate))));
+  const days: Record<string, StatsNode> = {};
+  for (const d of snap.docs) days[d.data().date] = d.data() as StatsNode;
+  return days;
+}
+
+// One-time (per window) rebuild from the raw sales: overwrites every day doc
+// from fromDate to today, then records that tracking covers that range. Run
+// automatically by the Dashboard the first time it finds no summary yet.
+export async function rebuildDailyStats(fromDate: Date) {
+  const sales = await getSales({ fromDate });
+  const saleItems = await getSaleItemsForSales(sales.map((s: any) => s.id));
+  const days = buildDailyStats(sales, saleItems);
+
+  const keys: string[] = [];
+  for (let d = new Date(fromDate); d <= new Date(); d.setDate(d.getDate() + 1)) keys.push(statsDayKey(d));
+  for (let i = 0; i < keys.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const key of keys.slice(i, i + 400)) batch.set(statsDocRef(key), days[key] || { date: key });
+    await batch.commit();
+  }
+  await setDoc(STATS_META_REF(), { builtFrom: statsDayKey(fromDate), builtAt: serverTimestamp() });
+  return days;
+}
+
 export async function getSale(id: string) {
   const saleDoc = await getDoc(doc(db, "sales", id));
   if (!saleDoc.exists()) return null;
@@ -1021,6 +1189,12 @@ export async function cancelSale(saleId: string, cancelledBy: { uid: string; nam
       totalRevenue: increment(-sale.totalAmount),
     }, { merge: true });
 
+    // Take it back out of the Dashboard summary for the day it was sold.
+    const soldAt: Date | undefined = (sale as any).createdAt?.toDate?.();
+    if (soldAt) {
+      applySaleStats(tx, statsDayKey(soldAt), addStats({}, saleStatsContribution(sale, items, soldAt), -1));
+    }
+
     for (const item of items) {
       // Sales only ever draw from Showroom Stock, so a cancellation always
       // restores into Showroom too.
@@ -1103,6 +1277,16 @@ export async function adminUpdateSale(
 
     const changes = diffFields(before, patch, SALE_EDITABLE_FIELDS);
     if (changes.length > 0) tx.update(ref, { ...patch, updatedAt: serverTimestamp() });
+
+    // Payment method and customer name feed the Dashboard summary's payment
+    // mix / top customers, so move this sale's share from the old values to
+    // the new ones (items are unchanged, so they're left out of both sides).
+    const soldAt: Date | undefined = before.createdAt?.toDate?.();
+    if (soldAt && changes.some((c) => c.field === "paymentMethod" || c.field === "customerName")) {
+      const delta = addStats({}, saleStatsContribution(before, [], soldAt), -1);
+      addStats(delta, saleStatsContribution({ ...before, ...patch }, [], soldAt));
+      applySaleStats(tx, statsDayKey(soldAt), delta);
+    }
 
     writeAuditLog(tx, {
       collectionName: "sales",

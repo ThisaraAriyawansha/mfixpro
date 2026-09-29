@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getSales, getProducts, getCustomers, countCustomers, getSaleItemsForSales, getMainCategories, getJobs, getExpenses,
   getJobsByStatus, getJobsReturnedSince, getJobStatusCounts, ACTIVE_JOB_STATUSES,
+  getDailyStats, getDailyStatsMeta, rebuildDailyStats, buildDailyStats, getRecentSales, getUnsettledSales, statsDayKey,
+  type StatsNode,
 } from "@/lib/firestore";
 import {
   AlertTriangle, ArrowDown, ArrowUp, ArrowUpRight, Award, Clock, CreditCard, Crown, Flame, Package,
@@ -11,7 +13,7 @@ import {
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import AccessRestricted from "@/components/ui/AccessRestricted";
-import { SALE_PAYMENT_METHOD_LABEL, salePaymentSplits } from "@/types";
+import { SALE_PAYMENT_METHOD_LABEL } from "@/types";
 
 type Period = "today" | "7d" | "30d";
 type Delta = { pct: number; up: boolean } | null;
@@ -84,6 +86,43 @@ const Empty = ({ text }: { text: string }) => <p className="text-sm text-zinc-40
 // lists, technician load), received in the window (intake, devices, recent
 // activity), or returned in the window (turnaround). Old delivered jobs are
 // never read, so this stays bounded as the job history grows.
+// n consecutive local day keys (YYYY-MM-DD) starting at `start`.
+function dayKeys(start: Date, n: number) {
+  return Array.from({ length: n }, (_, i) =>
+    statsDayKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i))
+  );
+}
+
+// Adds up one breakdown map (byProduct, byMethod, byStaff, …) across days:
+// numbers are summed, labels (name, productId) kept.
+function mergeBreakdown(days: any[], field: string) {
+  const out: Record<string, any> = {};
+  for (const d of days) {
+    for (const [k, v] of Object.entries<any>(d?.[field] || {})) {
+      if (typeof v === "number") { out[k] = (out[k] || 0) + v; continue; }
+      const e = (out[k] ||= {});
+      for (const [f, x] of Object.entries<any>(v)) e[f] = typeof x === "number" ? (e[f] || 0) + x : x;
+    }
+  }
+  return out;
+}
+
+// The window's per-day sales summaries (see DAILY SALES STATS in
+// lib/firestore.ts) — ~60 small docs. The first time the summary doesn't
+// cover the window yet, it's built once from the raw sales and saved; if that
+// save isn't possible, the same numbers are computed in memory instead.
+async function getWindowDailyStats(windowStart: Date): Promise<Record<string, StatsNode>> {
+  const meta = await getDailyStatsMeta().catch(() => null);
+  if (meta && meta.builtFrom <= statsDayKey(windowStart)) return getDailyStats(windowStart);
+  try {
+    return await rebuildDailyStats(windowStart);
+  } catch (err) {
+    console.error("Could not save the dashboard summary; computing it in memory:", err);
+    const sales = await getSales({ fromDate: windowStart });
+    return buildDailyStats(sales, await getSaleItemsForSales(sales.map((s: any) => s.id)));
+  }
+}
+
 async function getDashboardJobs(windowStart: Date) {
   const [active, recent, returned] = await Promise.all([
     getJobsByStatus(ACTIVE_JOB_STATUSES),
@@ -107,7 +146,8 @@ export default function DashboardPage() {
 
   const [period, setPeriod] = useState<Period>("7d");
   const [raw, setRaw] = useState<{
-    sales: any[]; saleItems: any[]; products: any[]; customers: any[]; customerCount: number; mainCats: any[];
+    days: Record<string, StatsNode>; recentSales: any[]; unsettled: any[];
+    products: any[]; customers: any[]; customerCount: number; mainCats: any[];
     jobs: any[]; jobCounts: Record<string, number> | null; expenses: any[];
   } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -120,8 +160,10 @@ export default function DashboardPage() {
       const windowStart = startOfDay(new Date(Date.now() - 59 * DAY_MS));
       // Customers and jobs are bounded the same way: only the window's rows
       // plus server-side counts for the all-time totals.
-      const [allSales, products, customers, customerCount, mainCats, jobs, jobCounts, expenses] = await Promise.all([
-        getSales({ fromDate: windowStart }),
+      const [days, recentSales, unsettled, products, customers, customerCount, mainCats, jobs, jobCounts, expenses] = await Promise.all([
+        getWindowDailyStats(windowStart),
+        getRecentSales(12).catch(() => []),
+        getUnsettledSales().catch(() => []),
         getProducts(),
         getCustomers({ fromDate: windowStart }),
         countCustomers().catch(() => 0),
@@ -130,12 +172,11 @@ export default function DashboardPage() {
         canViewJobs ? getJobStatusCounts().catch(() => null) : Promise.resolve(null),
         canViewFinance ? getExpenses({ fromDate: windowStart }).catch(() => []) : Promise.resolve([]),
       ]);
-      const allSaleItems = await getSaleItemsForSales(allSales.map((s: any) => s.id));
-      // Reversed bills shouldn't count toward revenue, trends, or product performance.
-      const cancelledIds = new Set(allSales.filter((s: any) => s.status === "cancelled").map((s: any) => s.id));
+      // Reversed bills are already excluded from the daily summaries.
       setRaw({
-        sales: allSales.filter((s: any) => s.status !== "cancelled"),
-        saleItems: allSaleItems.filter((it: any) => !cancelledIds.has(it.saleId)),
+        days,
+        recentSales: recentSales.filter((s: any) => s.status !== "cancelled"),
+        unsettled,
         products, customers, customerCount, mainCats, jobs, jobCounts, expenses,
       });
     }
@@ -152,21 +193,19 @@ export default function DashboardPage() {
     const inCur = (d?: Date) => !!d && d >= curStart;
     const inPrev = (d?: Date) => !!d && d >= prevStart && d < curStart;
 
-    const saleDate = new Map<string, Date | undefined>(raw.sales.map((s) => [s.id, toDate(s.createdAt)]));
-    const costBySale = new Map<string, number>();
-    for (const it of raw.saleItems) {
-      costBySale.set(it.saleId, (costBySale.get(it.saleId) || 0) + (it.costPrice || 0) * (it.qty || 0));
-    }
-
-    const curSales = raw.sales.filter((s) => inCur(saleDate.get(s.id)));
-    const prevSales = raw.sales.filter((s) => inPrev(saleDate.get(s.id)));
-    const curItems = raw.saleItems.filter((it) => inCur(saleDate.get(it.saleId)));
+    // Sales figures come from the per-day summaries (raw.days, keyed by
+    // YYYY-MM-DD) rather than individual sales.
+    const curKeys = dayKeys(curStart, cfg.days);
+    const prevKeys = dayKeys(prevStart, cfg.days);
+    const dayOf = (k: string) => (raw.days[k] || {}) as any;
+    const total = (keys: string[], field: string) => keys.reduce((t, k) => t + (dayOf(k)[field] || 0), 0);
+    const curDays = curKeys.map(dayOf);
     const sum = (arr: any[], f: (x: any) => number) => arr.reduce((t, x) => t + (f(x) || 0), 0);
 
-    const revenue = sum(curSales, (s) => s.totalAmount);
-    const prevRevenue = sum(prevSales, (s) => s.totalAmount);
-    const cogs = sum(curSales, (s) => costBySale.get(s.id) || 0);
-    const prevCogs = sum(prevSales, (s) => costBySale.get(s.id) || 0);
+    const revenue = total(curKeys, "revenue");
+    const prevRevenue = total(prevKeys, "revenue");
+    const cogs = total(curKeys, "cogs");
+    const prevCogs = total(prevKeys, "cogs");
     // Gross profit off the bill total so repair service charges (no cost
     // basis) and discounts both land in the margin, not just product lines.
     const gross = revenue - cogs;
@@ -174,12 +213,13 @@ export default function DashboardPage() {
     const expenses = sum(raw.expenses.filter((e) => inCur(toDate(e.createdAt))), (e) => e.amount);
     const prevExpenses = sum(raw.expenses.filter((e) => inPrev(toDate(e.createdAt))), (e) => e.amount);
     const net = gross - expenses;
-    const orders = curSales.length;
+    const orders = total(curKeys, "orders");
+    const prevOrders = total(prevKeys, "orders");
     const aov = orders ? revenue / orders : 0;
-    const prevAov = prevSales.length ? prevRevenue / prevSales.length : 0;
-    const itemsSold = sum(curItems, (it) => it.qty);
-    const repairRevenue = sum(curSales.filter((s) => s.jobId), (s) => s.totalAmount);
-    const unsettled = raw.sales.filter((s) => s.paymentStatus && s.paymentStatus !== "paid");
+    const prevAov = prevOrders ? prevRevenue / prevOrders : 0;
+    const itemsSold = total(curKeys, "itemsSold");
+    const repairRevenue = total(curKeys, "repairRevenue");
+    const unsettled = raw.unsettled;
 
     // Trend series — hourly for Today, daily otherwise, with the previous
     // period aligned bucket-for-bucket as a comparison line.
@@ -189,8 +229,12 @@ export default function DashboardPage() {
       series = Array.from({ length: 24 }, (_, h) => ({
         label: `${h % 12 || 12}${h < 12 ? "a" : "p"}`, sub: `${h}:00 – ${h}:59`, cur: 0, prev: 0,
       }));
-      for (const s of curSales) series[saleDate.get(s.id)!.getHours()].cur += s.totalAmount || 0;
-      for (const s of prevSales) series[saleDate.get(s.id)!.getHours()].prev += s.totalAmount || 0;
+      const todayHours = dayOf(curKeys[0]).byHour || {};
+      const yesterdayHours = dayOf(prevKeys[0]).byHour || {};
+      series.forEach((p, h) => {
+        p.cur = todayHours[`h${h}`]?.revenue || 0;
+        p.prev = yesterdayHours[`h${h}`]?.revenue || 0;
+      });
       // Trim empty leading/trailing hours so the chart focuses on trading hours.
       const active = series.map((p, i) => (p.cur || p.prev ? i : -1)).filter((i) => i >= 0);
       const from = Math.min(8, ...active), to = Math.max(20, now.getHours(), ...active);
@@ -201,25 +245,21 @@ export default function DashboardPage() {
         return {
           label: cfg.days > 7 ? `${d.getDate()}` : DAY_SHORT[d.getDay()],
           sub: d.toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" }),
-          cur: 0, prev: 0,
+          cur: dayOf(curKeys[i]).revenue || 0,
+          prev: dayOf(prevKeys[i]).revenue || 0,
         };
       });
-      for (const s of curSales) {
-        const i = Math.floor((startOfDay(saleDate.get(s.id)!).getTime() - curStart.getTime()) / DAY_MS);
-        if (series[i]) series[i].cur += s.totalAmount || 0;
-      }
-      for (const s of prevSales) {
-        const i = Math.floor((startOfDay(saleDate.get(s.id)!).getTime() - prevStart.getTime()) / DAY_MS);
-        if (series[i]) series[i].prev += s.totalAmount || 0;
-      }
     }
 
     // Busiest hours heatmap — always the last 30 days so it has enough signal.
     const heatStart = new Date(todayStart.getTime() - 29 * DAY_MS);
     const heat: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
-    for (const s of raw.sales) {
-      const d = saleDate.get(s.id);
-      if (d && d >= heatStart) heat[d.getDay()][d.getHours()] += 1;
+    for (const k of dayKeys(heatStart, 30)) {
+      const weekday = new Date(`${k}T00:00:00`).getDay();
+      for (const [hk, v] of Object.entries<any>(dayOf(k).byHour || {})) {
+        const h = Number(hk.slice(1));
+        if (h >= 0 && h < 24) heat[weekday][h] += Math.max(0, v?.count || 0);
+      }
     }
     const usedHours = heat.flatMap((row) => row.map((v, h) => (v ? h : -1))).filter((h) => h >= 0);
     const heatFrom = Math.min(8, ...usedHours), heatTo = Math.max(20, ...usedHours);
@@ -228,31 +268,23 @@ export default function DashboardPage() {
     heat.forEach((row, d) => row.forEach((c, h) => { if (c > peak.count) peak = { day: d, hour: h, count: c }; }));
 
     // Products
-    const byProduct = new Map<string, { name: string; qty: number; revenue: number; cost: number }>();
-    for (const it of curItems) {
-      const key = it.productId || it.productName;
-      const e = byProduct.get(key) || { name: it.productName, qty: 0, revenue: 0, cost: 0 };
-      e.qty += it.qty || 0;
-      e.revenue += it.lineTotal || 0;
-      e.cost += (it.costPrice || 0) * (it.qty || 0);
-      byProduct.set(key, e);
-    }
-    const topProducts = Array.from(byProduct.values()).sort((x, y) => y.revenue - x.revenue).slice(0, 6);
+    const productRows = Object.values<any>(mergeBreakdown(curDays, "byProduct")).filter((e) => e.qty > 0);
+    const topProducts = productRows
+      .map((e): { name: string; qty: number; revenue: number; cost: number } => ({ name: e.name, qty: e.qty, revenue: e.revenue, cost: e.cost }))
+      .sort((x, y) => y.revenue - x.revenue).slice(0, 6);
 
     // Category mix
     const productCat = new Map(raw.products.map((p) => [p.id, p.mainCategoryId]));
     const catName = new Map(raw.mainCats.map((c) => [c.id, c.name]));
     const byCat = new Map<string, number>();
-    for (const it of curItems) {
-      const n = catName.get(productCat.get(it.productId)) || "Uncategorized";
-      byCat.set(n, (byCat.get(n) || 0) + (it.lineTotal || 0));
+    for (const e of productRows) {
+      const n = catName.get(productCat.get(e.productId)) || "Uncategorized";
+      byCat.set(n, (byCat.get(n) || 0) + (e.revenue || 0));
     }
     // Job repair lines vs. quick services picked from the POS Services tab
     // (those carry a serviceId back to the Services catalog).
-    const paidServices = (s: any, quick: boolean) =>
-      sum(s.services || [], (sv: any) => (sv.chargeType === "paid" && !!sv.serviceId === quick ? sv.price : 0));
-    const repairLines = sum(curSales, (s) => paidServices(s, false));
-    const quickLines = sum(curSales, (s) => paidServices(s, true));
+    const repairLines = total(curKeys, "repairLines");
+    const quickLines = total(curKeys, "quickLines");
     if (repairLines > 0) byCat.set("Repair services", (byCat.get("Repair services") || 0) + repairLines);
     if (quickLines > 0) byCat.set("Quick services", (byCat.get("Quick services") || 0) + quickLines);
     const catTotal = Array.from(byCat.values()).reduce((x, y) => x + y, 0);
@@ -261,39 +293,26 @@ export default function DashboardPage() {
       .sort((x, y) => y.amount - x.amount).slice(0, 5);
 
     // Payment mix
-    const byMethod = new Map<string, number>();
-    for (const s of curSales) for (const sp of salePaymentSplits(s)) {
-      const m = sp.method || "other";
-      byMethod.set(m, (byMethod.get(m) || 0) + (sp.amount || 0));
-    }
+    const byMethod = new Map<string, number>(
+      Object.entries<number>(mergeBreakdown(curDays, "byMethod")).filter(([, amount]) => amount > 0)
+    );
     const payTotal = Array.from(byMethod.values()).reduce((x, y) => x + y, 0);
     const payments = Array.from(byMethod.entries())
       .map(([method, amount]) => ({ method, amount, pct: payTotal ? (amount / payTotal) * 100 : 0 }))
       .sort((x, y) => y.amount - x.amount);
 
     // Staff
-    const byStaff = new Map<string, { name: string; revenue: number; count: number }>();
-    for (const s of curSales) {
-      const name = s.cashierName || "Unknown";
-      const e = byStaff.get(name) || { name, revenue: 0, count: 0 };
-      e.revenue += s.totalAmount || 0;
-      e.count += 1;
-      byStaff.set(name, e);
-    }
-    const staff = Array.from(byStaff.values()).sort((x, y) => y.revenue - x.revenue).slice(0, 5);
+    const staff = Object.values<any>(mergeBreakdown(curDays, "byStaff"))
+      .filter((e) => e.count > 0)
+      .map((e): { name: string; revenue: number; count: number } => ({ name: e.name || "Unknown", revenue: e.revenue, count: e.count }))
+      .sort((x, y) => y.revenue - x.revenue).slice(0, 5);
 
     // Customers
-    const byCustomer = new Map<string, { name: string; spend: number; visits: number }>();
-    for (const s of curSales) {
-      if (!s.customerId && !s.customerName) continue;
-      const key = s.customerId || s.customerName;
-      const e = byCustomer.get(key) || { name: s.customerName || "Customer", spend: 0, visits: 0 };
-      e.spend += s.totalAmount || 0;
-      e.visits += 1;
-      byCustomer.set(key, e);
-    }
-    const topCustomers = Array.from(byCustomer.values()).sort((x, y) => y.spend - x.spend).slice(0, 5);
-    const walkIns = curSales.filter((s) => !s.customerId && !s.customerName).length;
+    const topCustomers = Object.values<any>(mergeBreakdown(curDays, "byCustomer"))
+      .filter((e) => e.visits > 0)
+      .map((e): { name: string; spend: number; visits: number } => ({ name: e.name || "Customer", spend: e.spend, visits: e.visits }))
+      .sort((x, y) => y.spend - x.spend).slice(0, 5);
+    const walkIns = total(curKeys, "walkIns");
     const newCustomers = raw.customers.filter((c) => inCur(toDate(c.createdAt))).length;
     const prevNewCustomers = raw.customers.filter((c) => inPrev(toDate(c.createdAt))).length;
 
@@ -335,8 +354,8 @@ export default function DashboardPage() {
 
     // Recent activity — sales and job intakes on one timeline.
     const activity = [
-      ...raw.sales.slice(0, 8).map((s) => ({
-        kind: "sale" as const, id: s.id, when: saleDate.get(s.id), title: s.invoiceNo,
+      ...raw.recentSales.slice(0, 8).map((s) => ({
+        kind: "sale" as const, id: s.id, when: toDate(s.createdAt), title: s.invoiceNo,
         sub: s.customerName || "Walk-in customer", amount: s.totalAmount as number, status: s.paymentStatus as string,
       })),
       ...jobs.slice(0, 8).map((j) => ({
@@ -354,7 +373,7 @@ export default function DashboardPage() {
       cfg, revenue, gross, cogs, expenses, net, orders, aov, itemsSold, repairRevenue, unsettled,
       margin: revenue ? (gross / revenue) * 100 : 0,
       revenueDelta: delta(revenue, prevRevenue), grossDelta: delta(gross, prevGross),
-      netDelta: delta(net, prevGross - prevExpenses), ordersDelta: delta(orders, prevSales.length),
+      netDelta: delta(net, prevGross - prevExpenses), ordersDelta: delta(orders, prevOrders),
       aovDelta: delta(aov, prevAov), expensesDelta: delta(expenses, prevExpenses),
       series, heat, heatFrom, heatTo, heatMax, peak,
       topProducts, categories, payments, payTotal, staff, topCustomers, walkIns,
