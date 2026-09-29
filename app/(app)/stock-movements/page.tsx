@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getStockMovements, getProducts } from "@/lib/firestore";
+import { getStockMovements, getProducts, dateInputRange } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { Search, Download } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
 import { rowsToCSV, downloadCSV } from "@/lib/csv";
@@ -37,19 +38,31 @@ export default function StockMovementsPage() {
   const [products, setProducts] = useState<Map<string, { name: string; sku: string }>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Defaults to the last 30 days — the date range is applied in the Firestore
+  // query, so only that window is read. Clear loads the full history.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [activeTypes, setActiveTypes] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
   useEffect(() => {
+    if (!canView) return;
+    getProducts().then((p) =>
+      setProducts(new Map((p as any[]).map((prod) => [prod.id, { name: prod.name, sku: prod.sku }])))
+    );
+  }, [canView]);
+
+  useEffect(() => {
     if (!canView) { setLoading(false); return; }
-    Promise.all([getStockMovements(), getProducts()]).then(([m, p]) => {
+    let cancelled = false;
+    setLoading(true);
+    getStockMovements(dateInputRange(fromDate, toDate)).then((m) => {
+      if (cancelled) return;
       setMovements(m);
-      setProducts(new Map((p as any[]).map((prod) => [prod.id, { name: prod.name, sku: prod.sku }])));
       setLoading(false);
     });
-  }, [canView]);
+    return () => { cancelled = true; };
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);
@@ -69,12 +82,6 @@ export default function StockMovementsPage() {
     if (!matchesSearch) return false;
 
     if (activeTypes.length > 0 && !activeTypes.includes(m.referenceType)) return false;
-
-    if (fromDate || toDate) {
-      const created = m.createdAt?.toDate ? m.createdAt.toDate() : new Date(m.createdAt);
-      if (fromDate && created < new Date(`${fromDate}T00:00:00`)) return false;
-      if (toDate && created > new Date(`${toDate}T23:59:59.999`)) return false;
-    }
     return true;
   });
 
@@ -113,7 +120,9 @@ export default function StockMovementsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
           <h1 className="font-prata text-2xl text-ink">Stock Movements</h1>
-          <p className="text-zinc-500 text-sm mt-1">{filtered.length} of {movements.length} movements</p>
+          <p className="text-zinc-500 text-sm mt-1">
+            {filtered.length} of {movements.length} movements{fromDate || toDate ? " in this date range" : ""}
+          </p>
         </div>
         <button
           onClick={handleExportCSV}

@@ -2,8 +2,9 @@
 import { useEffect, useState, useRef } from "react";
 import {
   getProducts, getQuotations, getQuotation, createQuotation,
-  updateQuotationStatus, deleteQuotation,
+  updateQuotationStatus, deleteQuotation, dateInputRange,
 } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import type { Product } from "@/types";
 import {
   Search, Printer, Eye, X, Plus, Trash2, Check, Ban, FileText, Download,
@@ -39,8 +40,9 @@ export default function QuotationsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Last 30 days by default, applied in the Firestore query. Clear loads all.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
@@ -77,13 +79,20 @@ export default function QuotationsPage() {
   const canView = can("quotations.view");
   const canDelete = can("quotations.delete");
 
-  const loadQuotations = () => getQuotations().then((q) => { setQuotations(q); setLoading(false); });
+  const loadQuotations = () =>
+    getQuotations(dateInputRange(fromDate, toDate)).then((q) => { setQuotations(q); setLoading(false); });
+
+  useEffect(() => {
+    if (!canView) return;
+    getProducts().then((p) => setProducts(p as Product[]));
+  }, [canView]);
 
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
+    setLoading(true);
     loadQuotations();
-    getProducts().then((p) => setProducts(p as Product[]));
-  }, [canView]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);

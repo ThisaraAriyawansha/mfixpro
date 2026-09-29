@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getStockOuts, getStockOut, adminUpdateStockOut, getJobs } from "@/lib/firestore";
+import { getStockOuts, getStockOut, adminUpdateStockOut, getJobsByStatus, getJob, ACTIVE_JOB_STATUSES, dateInputRange } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { useAuth } from "@/hooks/useAuth";
 import { Search, Plus, Eye, X, PackageMinus, Download, Pencil } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
@@ -22,8 +23,9 @@ export default function StockOutPage() {
   const [stockOuts, setStockOuts] = useState<any[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Last 30 days by default, applied in the Firestore query. Clear loads all.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [viewStockOut, setViewStockOut] = useState<any>(null);
@@ -32,11 +34,15 @@ export default function StockOutPage() {
   const [editForm, setEditForm] = useState({ recipient: "", reason: "job" as "job" | "sale" | "other", reasonDetail: "", jobId: "", note: "" });
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const loadStockOuts = () =>
+    getStockOuts(dateInputRange(fromDate, toDate)).then((s) => { setStockOuts(s); setLoading(false); });
+
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
-    getStockOuts().then((s) => { setStockOuts(s); setLoading(false); });
-    if (canAdminEdit) getJobs().then(setJobs);
-  }, [canView, canAdminEdit]);
+    setLoading(true);
+    loadStockOuts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);
@@ -57,6 +63,17 @@ export default function StockOutPage() {
       note: viewStockOut.note || "",
     });
     setEditingStockOut(true);
+    // Job options are only needed while editing: jobs still in the shop, plus
+    // this record's own job even if it's since been delivered — otherwise a
+    // save would drop its jobNo.
+    const currentJobId = viewStockOut.jobId;
+    getJobsByStatus(ACTIVE_JOB_STATUSES).then(async (active) => {
+      if (currentJobId && !active.some((j) => j.id === currentJobId)) {
+        const current = await getJob(currentJobId).catch(() => null);
+        if (current) active = [current, ...active];
+      }
+      setJobs(active);
+    });
   };
 
   const handleSaveEdit = async () => {
@@ -77,7 +94,7 @@ export default function StockOutPage() {
         { uid: user!.uid, name: userDisplayName || user?.email || "Admin" }
       );
       setViewStockOut(await getStockOut(viewStockOut.id));
-      await getStockOuts().then(setStockOuts);
+      await loadStockOuts();
       setEditingStockOut(false);
     } finally {
       setSavingEdit(false);

@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import type { QueryDocumentSnapshot } from "firebase/firestore";
 import {
-  getCustomers, getTechnicians, getJobs, getJob, createJob, updateJobStatus, getAllJobsWithHistory, adminUpdateJob,
-  getNextJobNo,
+  getTechnicians, getJobsPage, countJobs, searchJobs, getJob, createJob, updateJobStatus, getAllJobsWithHistory, adminUpdateJob,
+  getNextJobNo, type JobFilters,
 } from "@/lib/firestore";
+import { useCustomerSearch } from "@/hooks/useCustomerSearch";
 import type { Customer, JobStatus, JobServiceItem, JobDevicePart, UserProfile } from "@/types";
 import { jobServicesTotal } from "@/types";
 import {
@@ -304,8 +306,16 @@ export default function JobsPage() {
   const { user, userDisplayName, can } = useAuth();
   const canView = can("jobs.view");
   const canAdminEdit = can("jobs.edit");
+  // Only the current page of jobs is held here — pages are fetched from
+  // Firestore one at a time (see loadPage), not sliced out of the full list.
   const [jobs, setJobs] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [totalJobs, setTotalJobs] = useState(0);
+  const [loadError, setLoadError] = useState("");
+  // cursorsRef.current[p] = last doc of page p, i.e. where page p+1 starts.
+  const cursorsRef = useRef<(QueryDocumentSnapshot | null)[]>([null]);
+  const loadReqRef = useRef(0);
+  const [searchResults, setSearchResults] = useState<any[] | null>(null);
+  const [searchingJobs, setSearchingJobs] = useState(false);
   const [technicians, setTechnicians] = useState<UserProfile[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -355,7 +365,58 @@ export default function JobsPage() {
     }
   };
 
-  const loadJobs = () => getJobs().then((j) => { setJobs(j); setLoading(false); });
+  const filters = useMemo<JobFilters>(() => ({
+    status: statusFilter === "all" ? undefined : (statusFilter as JobStatus),
+    fromDate: fromDate ? new Date(`${fromDate}T00:00:00`) : undefined,
+    toDate: toDate ? new Date(`${toDate}T23:59:59.999`) : undefined,
+  }), [statusFilter, fromDate, toDate]);
+
+  // Pages are only ever reached one step at a time (Prev/Next), so the
+  // cursor for page p is always already known from loading page p-1.
+  const loadPage = async (p: number, f: JobFilters = filters) => {
+    const req = ++loadReqRef.current;
+    setLoading(true);
+    setLoadError("");
+    try {
+      const { rows, cursor } = await getJobsPage(f, PAGE_SIZE, cursorsRef.current[p - 1] ?? null);
+      if (req !== loadReqRef.current) return;
+      cursorsRef.current[p] = cursor;
+      setJobs(rows);
+    } catch (err: any) {
+      if (req !== loadReqRef.current) return;
+      console.error("Failed to load jobs:", err);
+      setJobs([]);
+      setLoadError(
+        err?.code === "failed-precondition"
+          ? "This filter needs a Firestore index. Open the browser console for the link to create it, or deploy firestore.indexes.json."
+          : err?.message || "Failed to load jobs"
+      );
+    } finally {
+      if (req === loadReqRef.current) setLoading(false);
+    }
+  };
+
+  const refreshCount = (f: JobFilters = filters) =>
+    countJobs(f).then(setTotalJobs).catch((err) => console.error("Failed to count jobs:", err));
+
+  const reloadJobs = (f: JobFilters = filters) => {
+    cursorsRef.current = [null];
+    setPage(1);
+    refreshCount(f);
+    return loadPage(1, f);
+  };
+
+  // Refresh after an edit/status change: stay on the same page.
+  const loadJobs = () => {
+    refreshCount();
+    if (search.trim().length >= 2) searchJobs(search.trim(), 30).then(setSearchResults).catch(() => {});
+    return loadPage(page);
+  };
+
+  const goToPage = (p: number) => {
+    setPage(p);
+    loadPage(p);
+  };
 
   const confirmSendEmail = async () => {
     if (!emailPrompt || !user) return;
@@ -385,14 +446,34 @@ export default function JobsPage() {
   };
 
   useEffect(() => {
-    loadJobs();
-    getCustomers().then((c) => setCustomers(c as Customer[]));
     getTechnicians().then(setTechnicians);
   }, []);
 
+  // Runs on mount too — loads page 1 for the current filters.
   useEffect(() => {
-    setPage(1);
-  }, [search, statusFilter, fromDate, toDate]);
+    reloadJobs(filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
+
+  // Search queries Firestore directly (job no. / phone / name prefix), then
+  // the status & date filters are applied to those few results.
+  useEffect(() => {
+    const t = search.trim();
+    if (t.length < 2) {
+      setSearchResults(null);
+      setSearchingJobs(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchingJobs(true);
+    const timer = setTimeout(() => {
+      searchJobs(t, 30)
+        .then((r) => { if (!cancelled) setSearchResults(r); })
+        .catch(() => { if (!cancelled) setSearchResults([]); })
+        .finally(() => { if (!cancelled) setSearchingJobs(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [search]);
 
   const resetForm = () => {
     setForm(emptyForm());
@@ -413,14 +494,7 @@ export default function JobsPage() {
       .catch(() => {});
   };
 
-  const filteredCustomers = customerSearch
-    ? customers.filter(
-        (c) =>
-          c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-          c.phone?.toLowerCase().includes(customerSearch.toLowerCase()) ||
-          c.phone2?.toLowerCase().includes(customerSearch.toLowerCase())
-      ).slice(0, 8)
-    : [];
+  const { results: filteredCustomers } = useCustomerSearch(customerSearch);
 
   const pickCustomer = (c: Customer) => {
     setForm((f) => ({
@@ -480,7 +554,7 @@ export default function JobsPage() {
         advancePaid: Number(form.advancePaid) || 0,
         expectedDeliveryDate: form.expectedDeliveryDate ? new Date(`${form.expectedDeliveryDate}T00:00:00`) : null,
       }, customJobNo);
-      await loadJobs();
+      await reloadJobs();
       setShowCreate(false);
       const full = await getJob(result.jobId);
       setViewJob(full);
@@ -628,38 +702,24 @@ export default function JobsPage() {
     }
   };
 
-  const filtered = jobs.filter((j) => {
-    const matchesSearch =
-      j.jobNo?.toLowerCase().includes(search.toLowerCase()) ||
-      j.customerName?.toLowerCase().includes(search.toLowerCase()) ||
-      j.customerPhone?.toLowerCase().includes(search.toLowerCase()) ||
-      j.customerPhone2?.toLowerCase().includes(search.toLowerCase());
-    if (!matchesSearch) return false;
-
-    if (statusFilter !== "all" && j.status !== statusFilter) return false;
-
-    if (fromDate || toDate) {
-      const created = j.createdAt?.toDate ? j.createdAt.toDate() : new Date(j.createdAt);
-      if (fromDate && created < new Date(`${fromDate}T00:00:00`)) return false;
-      if (toDate && created > new Date(`${toDate}T23:59:59.999`)) return false;
-    }
+  const searching = searchResults !== null || searchingJobs;
+  const filteredSearchResults = (searchResults ?? []).filter((j) => {
+    if (filters.status && j.status !== filters.status) return false;
+    const created = j.createdAt?.toDate ? j.createdAt.toDate() : new Date(j.createdAt);
+    if (filters.fromDate && created < filters.fromDate) return false;
+    if (filters.toDate && created > filters.toDate) return false;
     return true;
   });
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const paginated = searching ? filteredSearchResults : jobs;
+  const totalPages = Math.max(1, Math.ceil(totalJobs / PAGE_SIZE));
+  const hasFilters = statusFilter !== "all" || !!fromDate || !!toDate;
 
   const handleExportReport = async () => {
     setExportingReport(true);
     try {
-      const all = await getAllJobsWithHistory();
-      const inRange = all.filter((j: any) => {
-        const created = j.createdAt?.toDate ? j.createdAt.toDate() : new Date(j.createdAt);
-        if (fromDate && created < new Date(`${fromDate}T00:00:00`)) return false;
-        if (toDate && created > new Date(`${toDate}T23:59:59.999`)) return false;
-        if (statusFilter !== "all" && j.status !== statusFilter) return false;
-        return true;
-      });
+      // Date/status filters are applied in the Firestore query itself, so the
+      // report only reads the jobs in range (plus their history).
+      const inRange = await getAllJobsWithHistory(filters);
 
       const header = [
         "Job No", "Received Date", "Customer", "Phone", "Device", "Current Status",
@@ -708,7 +768,9 @@ export default function JobsPage() {
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="font-prata text-2xl text-ink">Jobs</h1>
-          <p className="text-zinc-500 text-sm mt-1">{jobs.length} total job notes</p>
+          <p className="text-zinc-500 text-sm mt-1">
+            {totalJobs} {hasFilters ? "matching" : "total"} job notes
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleExportReport} disabled={exportingReport} className="nexora-btn nexora-btn-outline text-sm">
@@ -784,9 +846,11 @@ export default function JobsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-50">
-            {loading ? (
-              <tr><td colSpan={7} className="text-center py-10 text-zinc-400">Loading…</td></tr>
-            ) : filtered.length === 0 ? (
+            {(searching ? searchingJobs : loading) ? (
+              <tr><td colSpan={7} className="text-center py-10 text-zinc-400">{searching ? "Searching…" : "Loading…"}</td></tr>
+            ) : !searching && loadError ? (
+              <tr><td colSpan={7} className="text-center py-10 text-red-500">{loadError}</td></tr>
+            ) : paginated.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-10 text-zinc-400">No jobs found</td></tr>
             ) : (
               paginated.map((job) => (
@@ -813,7 +877,15 @@ export default function JobsPage() {
         </table>
       </div>
 
-      <Pagination page={page} totalPages={totalPages} totalItems={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
+      {searching ? (
+        !searchingJobs && (
+          <p className="text-xs text-zinc-500 mt-4 px-1">
+            {filteredSearchResults.length} result{filteredSearchResults.length === 1 ? "" : "s"} — matches job no., or the start of the customer name / phone.
+          </p>
+        )
+      ) : (
+        <Pagination page={page} totalPages={totalPages} totalItems={totalJobs} pageSize={PAGE_SIZE} onPageChange={goToPage} />
+      )}
 
       {/* Create job modal */}
       {showCreate && (

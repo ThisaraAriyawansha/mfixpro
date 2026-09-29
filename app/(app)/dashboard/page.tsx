@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  getSales, getProducts, getCustomers, getSaleItemsForSales, getMainCategories, getJobs, getExpenses,
+  getSales, getProducts, getCustomers, countCustomers, getSaleItemsForSales, getMainCategories, getJobs, getExpenses,
+  getJobsByStatus, getJobsReturnedSince, getJobStatusCounts, ACTIVE_JOB_STATUSES,
 } from "@/lib/firestore";
 import {
   AlertTriangle, ArrowDown, ArrowUp, ArrowUpRight, Award, Clock, CreditCard, Crown, Flame, Package,
@@ -79,6 +80,23 @@ function CardTitle({ icon: Icon, title, hint, action }: { icon?: any; title: str
 
 const Empty = ({ text }: { text: string }) => <p className="text-sm text-zinc-400 text-center py-8">{text}</p>;
 
+// Every job the dashboard actually looks at: still in the shop (open/ready
+// lists, technician load), received in the window (intake, devices, recent
+// activity), or returned in the window (turnaround). Old delivered jobs are
+// never read, so this stays bounded as the job history grows.
+async function getDashboardJobs(windowStart: Date) {
+  const [active, recent, returned] = await Promise.all([
+    getJobsByStatus(ACTIVE_JOB_STATUSES),
+    getJobs({ fromDate: windowStart }),
+    getJobsReturnedSince(windowStart),
+  ]);
+  const byId = new Map<string, any>();
+  for (const j of [...active, ...recent, ...returned]) byId.set(j.id, j);
+  return Array.from(byId.values()).sort(
+    (x, y) => (toDate(y.createdAt)?.getTime() ?? 0) - (toDate(x.createdAt)?.getTime() ?? 0)
+  );
+}
+
 export default function DashboardPage() {
   const { can } = useAuth();
   const canView = can("dashboard.view");
@@ -89,7 +107,8 @@ export default function DashboardPage() {
 
   const [period, setPeriod] = useState<Period>("7d");
   const [raw, setRaw] = useState<{
-    sales: any[]; saleItems: any[]; products: any[]; customers: any[]; mainCats: any[]; jobs: any[]; expenses: any[];
+    sales: any[]; saleItems: any[]; products: any[]; customers: any[]; customerCount: number; mainCats: any[];
+    jobs: any[]; jobCounts: Record<string, number> | null; expenses: any[];
   } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -99,12 +118,16 @@ export default function DashboardPage() {
       // comparison window before it. Bounded so the read cost doesn't grow
       // forever as the shop accumulates years of sales history.
       const windowStart = startOfDay(new Date(Date.now() - 59 * DAY_MS));
-      const [allSales, products, customers, mainCats, jobs, expenses] = await Promise.all([
+      // Customers and jobs are bounded the same way: only the window's rows
+      // plus server-side counts for the all-time totals.
+      const [allSales, products, customers, customerCount, mainCats, jobs, jobCounts, expenses] = await Promise.all([
         getSales({ fromDate: windowStart }),
         getProducts(),
-        getCustomers(),
+        getCustomers({ fromDate: windowStart }),
+        countCustomers().catch(() => 0),
         getMainCategories(),
-        canViewJobs ? getJobs().catch(() => []) : Promise.resolve([]),
+        canViewJobs ? getDashboardJobs(windowStart).catch(() => []) : Promise.resolve([]),
+        canViewJobs ? getJobStatusCounts().catch(() => null) : Promise.resolve(null),
         canViewFinance ? getExpenses({ fromDate: windowStart }).catch(() => []) : Promise.resolve([]),
       ]);
       const allSaleItems = await getSaleItemsForSales(allSales.map((s: any) => s.id));
@@ -113,7 +136,7 @@ export default function DashboardPage() {
       setRaw({
         sales: allSales.filter((s: any) => s.status !== "cancelled"),
         saleItems: allSaleItems.filter((it: any) => !cancelledIds.has(it.saleId)),
-        products, customers, mainCats, jobs, expenses,
+        products, customers, customerCount, mainCats, jobs, jobCounts, expenses,
       });
     }
     load();
@@ -275,9 +298,14 @@ export default function DashboardPage() {
     const prevNewCustomers = raw.customers.filter((c) => inPrev(toDate(c.createdAt))).length;
 
     // Repair jobs
+    // raw.jobs is only the active + recent slice (see getDashboardJobs), so
+    // all-time tallies come from the server-side status counts instead.
     const jobs = raw.jobs;
     const stageCounts = new Map<string, number>();
-    for (const j of jobs) stageCounts.set(j.status, (stageCounts.get(j.status) || 0) + 1);
+    if (raw.jobCounts) for (const [s, n] of Object.entries(raw.jobCounts)) stageCounts.set(s, n);
+    else for (const j of jobs) stageCounts.set(j.status, (stageCounts.get(j.status) || 0) + 1);
+    const countOf = (s: string) => stageCounts.get(s) || 0;
+    const jobsTotal = Array.from(stageCounts.values()).reduce((x, y) => x + y, 0);
     const openJobs = jobs.filter((j) => j.status === "pending" || j.status === "ongoing");
     const overdue = openJobs.filter((j) => { const d = toDate(j.expectedDeliveryDate); return d && d < todayStart; });
     const ready = jobs
@@ -290,8 +318,8 @@ export default function DashboardPage() {
     const turnaround = returned.length
       ? returned.reduce((t, j) => t + ((toDate(j.dateReturned)!.getTime() - (toDate(j.createdAt)?.getTime() ?? 0)) / DAY_MS), 0) / returned.length
       : null;
-    const closed = jobs.filter((j) => j.status === "delivered" || j.status === "unrepairable" || j.status === "done");
-    const successRate = closed.length ? (closed.filter((j) => j.status !== "unrepairable").length / closed.length) * 100 : null;
+    const closed = countOf("delivered") + countOf("unrepairable") + countOf("done");
+    const successRate = closed ? ((closed - countOf("unrepairable")) / closed) * 100 : null;
     const byTech = new Map<string, number>();
     for (const j of openJobs) {
       const n = j.assignedTechnicianName || "Unassigned";
@@ -330,8 +358,8 @@ export default function DashboardPage() {
       aovDelta: delta(aov, prevAov), expensesDelta: delta(expenses, prevExpenses),
       series, heat, heatFrom, heatTo, heatMax, peak,
       topProducts, categories, payments, payTotal, staff, topCustomers, walkIns,
-      newCustomers, newCustomersDelta: delta(newCustomers, prevNewCustomers), totalCustomers: raw.customers.length,
-      stageCounts, jobsTotal: jobs.length, openJobs, overdue, ready, received, receivedDelta: delta(received, prevReceived),
+      newCustomers, newCustomersDelta: delta(newCustomers, prevNewCustomers), totalCustomers: raw.customerCount,
+      stageCounts, jobsTotal, openJobs, overdue, ready, received, receivedDelta: delta(received, prevReceived),
       returnedCount: returned.length, turnaround, successRate, techLoad, devices, activity, lowStock,
       productCount: raw.products.length,
     };

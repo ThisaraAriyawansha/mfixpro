@@ -114,9 +114,11 @@ export default function SalaryPage() {
     const showsPicker = issueType === "commission" || issueType === "hybrid";
     if (!showsPicker || commissionPool || commissionPoolLoading) return;
     setCommissionPoolLoading(true);
+    // Same 180-day window for both, so the pool stays bounded.
+    const since = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
     Promise.all([
-      getSales({ fromDate: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) }),
-      getJobs(),
+      getSales({ fromDate: since }),
+      getJobs({ fromDate: since }),
     ]).then(([sales, jobs]) => {
       setCommissionPool({ sales, jobs });
       setCommissionPoolLoading(false);

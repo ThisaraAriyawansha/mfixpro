@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getWarranties, claimWarranty } from "@/lib/firestore";
+import {
+  getCurrentWarranties, getExpiredWarranties, getClaimedWarranties, getWarrantyCounts, claimWarranty,
+} from "@/lib/firestore";
 import { Warranty } from "@/types";
 import { Search, Shield, AlertTriangle, Check, ShieldCheck } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
@@ -14,7 +16,13 @@ type StatusKey = "active" | "expiring" | "expired" | "claimed";
 export default function WarrantyPage() {
   const { can } = useAuth();
   const canView = can("warranty.view");
+  // Only in-date warranties are loaded up front (bounded by warranty length).
+  // Expired and claimed lists are fetched on demand when that filter is
+  // picked, capped to the most recent ones, since they grow forever.
   const [warranties, setWarranties] = useState<Warranty[]>([]);
+  const [expiredList, setExpiredList] = useState<Warranty[] | null>(null);
+  const [claimedList, setClaimedList] = useState<Warranty[] | null>(null);
+  const [counts, setCounts] = useState<{ pastEndDate: number; claimed: number } | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusKey | "">("");
   const [loading, setLoading] = useState(true);
@@ -24,8 +32,19 @@ export default function WarrantyPage() {
   const [claiming, setClaiming] = useState(false);
 
   useEffect(() => {
-    getWarranties().then((w) => { setWarranties(w as Warranty[]); setLoading(false); });
-  }, []);
+    if (!canView) { setLoading(false); return; }
+    getCurrentWarranties().then((w) => { setWarranties(w as Warranty[]); setLoading(false); });
+    getWarrantyCounts().then(setCounts).catch(() => {});
+  }, [canView]);
+
+  useEffect(() => {
+    if (statusFilter === "expired" && !expiredList) {
+      getExpiredWarranties().then((w) => setExpiredList(w as Warranty[]));
+    }
+    if (statusFilter === "claimed" && !claimedList) {
+      getClaimedWarranties().then((w) => setClaimedList(w as Warranty[]));
+    }
+  }, [statusFilter, expiredList, claimedList]);
 
   useEffect(() => {
     setPage(1);
@@ -47,7 +66,16 @@ export default function WarrantyPage() {
     return { key: "active", label: "Active", color: "badge-success" };
   };
 
-  const filtered = warranties.filter((w) => {
+  const source =
+    statusFilter === "expired" ? expiredList ?? [] :
+    statusFilter === "claimed" ? claimedList ?? [] :
+    warranties;
+  const listLoading =
+    statusFilter === "expired" ? !expiredList :
+    statusFilter === "claimed" ? !claimedList :
+    loading;
+
+  const filtered = source.filter((w) => {
     const matchesSearch =
       w.customerName?.toLowerCase().includes(search.toLowerCase()) ||
       w.productName?.toLowerCase().includes(search.toLowerCase()) ||
@@ -60,13 +88,23 @@ export default function WarrantyPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const stats = warranties.reduce(
+  // Active / expiring come from the loaded in-date set. Claimed and expired
+  // are all-time, from server counts: claimed-and-expired warranties =
+  // all claimed − claimed ones still in date, and "Expired" excludes those.
+  const current = warranties.reduce(
     (acc, w) => {
       acc[getStatus(w).key]++;
       return acc;
     },
     { active: 0, expiring: 0, expired: 0, claimed: 0 } as Record<StatusKey, number>
   );
+  const claimedPastEnd = counts ? Math.max(0, counts.claimed - current.claimed) : 0;
+  const stats = {
+    active: current.active,
+    expiring: current.expiring,
+    expired: counts ? Math.max(0, counts.pastEndDate - claimedPastEnd) : 0,
+    claimed: counts ? counts.claimed : current.claimed,
+  };
 
   const openClaim = (w: Warranty) => {
     setClaimTarget(w);
@@ -78,11 +116,14 @@ export default function WarrantyPage() {
     setClaiming(true);
     try {
       await claimWarranty(claimTarget.id, claimNote.trim());
-      setWarranties((ws) =>
+      const markClaimed = (ws: Warranty[]): Warranty[] =>
         ws.map((w) =>
-          w.id === claimTarget.id ? { ...w, status: "claimed", claimNote: claimNote.trim(), claimedAt: new Date() } : w
-        )
-      );
+          w.id === claimTarget.id ? { ...w, status: "claimed" as const, claimNote: claimNote.trim(), claimedAt: new Date() } : w
+        );
+      setWarranties(markClaimed);
+      setExpiredList((ws) => (ws ? markClaimed(ws) : ws));
+      setClaimedList(null);
+      setCounts((c) => (c ? { ...c, claimed: c.claimed + 1 } : c));
       setClaimTarget(null);
     } finally {
       setClaiming(false);
@@ -146,7 +187,7 @@ export default function WarrantyPage() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as StatusKey | "")}
         >
-          <option value="">All statuses</option>
+          <option value="">All in-date</option>
           <option value="active">Active</option>
           <option value="expiring">Expiring Soon</option>
           <option value="expired">Expired</option>
@@ -173,7 +214,7 @@ export default function WarrantyPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-50">
-            {loading ? (
+            {listLoading ? (
               <tr><td colSpan={7} className="text-center py-10 text-zinc-400">Loading…</td></tr>
             ) : filtered.length === 0 ? (
               <tr><td colSpan={7} className="text-center py-10 text-zinc-400">No warranties found</td></tr>
@@ -209,6 +250,7 @@ export default function WarrantyPage() {
 
       <p className="text-xs text-zinc-400 mt-4">
         Warranties are automatically created when a product with warranty months is sold.
+        {statusFilter === "expired" && " Showing the 100 most recently expired."}
       </p>
 
       {/* Claim modal */}

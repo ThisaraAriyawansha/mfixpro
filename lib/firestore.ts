@@ -1,8 +1,9 @@
 import {
   collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
-  getDocs, getDoc, query, where, orderBy, limit,
+  getDocs, getDoc, query, where, orderBy, limit, startAfter,
   serverTimestamp, FieldValue, increment,
   runTransaction, Timestamp, writeBatch, getCountFromServer, deleteField,
+  type QueryConstraint, type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
@@ -12,6 +13,30 @@ import type { Service, ShopSettings, UserProfile,JobStatus, JobServiceItem, JobD
 import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
 import { isEditableRole, getDefaultPermissions, PERMISSION_CATALOG } from "./permissions";
+
+// Date-range filter on createdAt, newest first. List pages pass a default
+// window (e.g. the last 30 days) so their read cost doesn't grow with the
+// whole history; omitting both dates reads everything.
+export interface DateRange {
+  fromDate?: Date;
+  toDate?: Date;
+}
+
+function createdAtRange(opts?: DateRange): QueryConstraint[] {
+  const c: QueryConstraint[] = [];
+  if (opts?.fromDate) c.push(where("createdAt", ">=", Timestamp.fromDate(opts.fromDate)));
+  if (opts?.toDate) c.push(where("createdAt", "<=", Timestamp.fromDate(opts.toDate)));
+  c.push(orderBy("createdAt", "desc"));
+  return c;
+}
+
+// "YYYY-MM-DD" date-input values → the DateRange a list query expects.
+export function dateInputRange(fromDate: string, toDate: string): DateRange {
+  return {
+    fromDate: fromDate ? new Date(`${fromDate}T00:00:00`) : undefined,
+    toDate: toDate ? new Date(`${toDate}T23:59:59.999`) : undefined,
+  };
+}
 
 // ─── BRANDS ───────────────────────────────────────────────────────────────────
 
@@ -372,9 +397,37 @@ export async function updateBatch(
 
 // ─── WARRANTY ─────────────────────────────────────────────────────────────────
 
-export async function getWarranties() {
-  const snap = await getDocs(query(collection(db, "warranties"), orderBy("createdAt", "desc")));
+// Warranties still in date. Bounded by the longest warranty period (e.g. a
+// year of sales), not by the shop's whole sales history.
+export async function getCurrentWarranties() {
+  const snap = await getDocs(
+    query(collection(db, "warranties"), where("endDate", ">=", Timestamp.now()), orderBy("endDate", "asc"))
+  );
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Most recently expired first — this set grows forever, so it's capped.
+export async function getExpiredWarranties(max = 100) {
+  const snap = await getDocs(
+    query(collection(db, "warranties"), where("endDate", "<", Timestamp.now()), orderBy("endDate", "desc"), limit(max))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function getClaimedWarranties(max = 200) {
+  const snap = await getDocs(query(collection(db, "warranties"), where("status", "==", "claimed"), limit(max)));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as any)
+    .sort((a, b) => (b.claimedAt?.toMillis?.() ?? 0) - (a.claimedAt?.toMillis?.() ?? 0));
+}
+
+// All-time tallies via aggregation queries (~1 read per 1,000 docs).
+export async function getWarrantyCounts() {
+  const [expired, claimed] = await Promise.all([
+    getCountFromServer(query(collection(db, "warranties"), where("endDate", "<", Timestamp.now()))),
+    getCountFromServer(query(collection(db, "warranties"), where("status", "==", "claimed"))),
+  ]);
+  return { pastEndDate: expired.data().count, claimed: claimed.data().count };
 }
 
 export async function claimWarranty(id: string, note: string) {
@@ -387,9 +440,70 @@ export async function claimWarranty(id: string, note: string) {
 
 // ─── CUSTOMERS ────────────────────────────────────────────────────────────────
 
-export async function getCustomers() {
-  const snap = await getDocs(query(collection(db, "customers"), orderBy("name")));
+// Full directory (Customers page). Screens that only need recent sign-ups
+// pass fromDate so their read cost stays bounded as the list grows.
+export async function getCustomers(opts?: { fromDate?: Date }) {
+  const q = opts?.fromDate
+    ? query(collection(db, "customers"), where("createdAt", ">=", Timestamp.fromDate(opts.fromDate)), orderBy("createdAt", "desc"))
+    : query(collection(db, "customers"), orderBy("name"));
+  const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// One A–Z page of the customer directory; pass the previous page's cursor.
+export async function getCustomersPage(pageSize: number, after?: QueryDocumentSnapshot | null) {
+  const constraints: QueryConstraint[] = [orderBy("name")];
+  if (after) constraints.push(startAfter(after));
+  constraints.push(limit(pageSize));
+  const snap = await getDocs(query(collection(db, "customers"), ...constraints));
+  return {
+    rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    cursor: snap.docs.length ? snap.docs[snap.docs.length - 1] : null,
+  };
+}
+
+export async function countCustomers() {
+  const snap = await getCountFromServer(collection(db, "customers"));
+  return snap.data().count;
+}
+
+// Case variants tried for a name prefix search — Firestore string ranges are
+// case-sensitive, so "kamal" also has to try "Kamal" / "KAMAL".
+function prefixVariants(term: string) {
+  const t = term.trim();
+  const title = t.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  return Array.from(new Set([t, title, t.toLowerCase(), t.toUpperCase()])).filter(Boolean);
+}
+
+function prefixQuery(collectionName: string, field: string, prefix: string, max: number) {
+  return query(
+    collection(db, collectionName),
+    where(field, ">=", prefix),
+    where(field, "<=", prefix + ""),
+    limit(max)
+  );
+}
+
+// Server-side "starts with" search on name / phone / phone2, so pickers
+// don't have to download the whole customer list just to filter it.
+export async function searchCustomers(term: string, max = 8) {
+  const t = term.trim();
+  if (t.length < 2) return [];
+  const queries = [
+    ...prefixVariants(t).map((v) => prefixQuery("customers", "name", v, max)),
+    prefixQuery("customers", "phone", t, max),
+    prefixQuery("customers", "phone2", t, max),
+  ];
+  const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+  const byId = new Map<string, any>();
+  for (const snap of snaps) for (const d of snap.docs) byId.set(d.id, { id: d.id, ...d.data() });
+  return Array.from(byId.values()).slice(0, max);
+}
+
+export async function getCustomerByPhone(phone: string) {
+  if (!phone) return null;
+  const snap = await getDocs(query(collection(db, "customers"), where("phone", "==", phone), limit(1)));
+  return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
 }
 
 export async function addCustomer(data: {
@@ -1050,8 +1164,8 @@ export async function createQuotation(data: QuotationData) {
   });
 }
 
-export async function getQuotations() {
-  const snap = await getDocs(query(collection(db, "quotations"), orderBy("createdAt", "desc")));
+export async function getQuotations(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "quotations"), ...createdAtRange(opts)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
@@ -1178,9 +1292,96 @@ export async function createJob(data: JobData, customJobNo?: string) {
   });
 }
 
-export async function getJobs() {
-  const snap = await getDocs(query(collection(db, "jobs"), orderBy("createdAt", "desc")));
+// Pass a date range wherever possible — without one this reads every job
+// ever recorded, and that cost grows forever.
+export async function getJobs(opts?: { fromDate?: Date; toDate?: Date }) {
+  const snap = await getDocs(query(collection(db, "jobs"), ...jobConstraints(opts)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// Jobs still in the shop (not yet delivered / written off). This set stays
+// roughly the size of the workbench, not the size of the job history.
+export const ACTIVE_JOB_STATUSES: JobStatus[] = ["pending", "ongoing", "done"];
+
+export async function getJobsByStatus(statuses: JobStatus[]) {
+  const snap = await getDocs(query(collection(db, "jobs"), where("status", "in", statuses)));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as any)
+    .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+}
+
+export async function getJobsReturnedSince(fromDate: Date) {
+  const snap = await getDocs(
+    query(collection(db, "jobs"), where("dateReturned", ">=", Timestamp.fromDate(fromDate)))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// One aggregation query per status — billed at ~1 read per 1,000 jobs
+// counted, instead of reading every job doc just to tally them.
+export async function getJobStatusCounts() {
+  const statuses: JobStatus[] = ["pending", "ongoing", "done", "delivered", "unrepairable"];
+  const counts = await Promise.all(
+    statuses.map((s) => getCountFromServer(query(collection(db, "jobs"), where("status", "==", s))))
+  );
+  return Object.fromEntries(statuses.map((s, i) => [s, counts[i].data().count])) as Record<JobStatus, number>;
+}
+
+export interface JobFilters {
+  status?: JobStatus;
+  fromDate?: Date;
+  toDate?: Date;
+}
+
+// status + createdAt range/order needs the composite index
+// jobs (status ASC, createdAt DESC) — see firestore.indexes.json.
+function jobConstraints(f?: JobFilters): QueryConstraint[] {
+  const c: QueryConstraint[] = [];
+  if (f?.status) c.push(where("status", "==", f.status));
+  if (f?.fromDate) c.push(where("createdAt", ">=", Timestamp.fromDate(f.fromDate)));
+  if (f?.toDate) c.push(where("createdAt", "<=", Timestamp.fromDate(f.toDate)));
+  c.push(orderBy("createdAt", "desc"));
+  return c;
+}
+
+// One page of the Jobs list, fetched from the server — costs pageSize reads
+// no matter how many jobs exist. Pass the previous page's cursor to continue.
+export async function getJobsPage(f: JobFilters, pageSize: number, after?: QueryDocumentSnapshot | null) {
+  const constraints = [...jobConstraints(f)];
+  if (after) constraints.push(startAfter(after));
+  constraints.push(limit(pageSize));
+  const snap = await getDocs(query(collection(db, "jobs"), ...constraints));
+  return {
+    rows: snap.docs.map((d) => ({ id: d.id, ...d.data() })),
+    cursor: snap.docs.length ? snap.docs[snap.docs.length - 1] : null,
+  };
+}
+
+export async function countJobs(f: JobFilters) {
+  const snap = await getCountFromServer(query(collection(db, "jobs"), ...jobConstraints(f)));
+  return snap.data().count;
+}
+
+// Server-side job lookup by job number (exact, "123" → JOB-00123), phone
+// prefix, or customer-name prefix.
+export async function searchJobs(term: string, max = 20) {
+  const t = term.trim();
+  if (t.length < 2) return [];
+  const jobNos = new Set([t.toUpperCase()]);
+  const digits = t.replace(/^JOB-?/i, "");
+  if (/^\d+$/.test(digits)) jobNos.add(formatJobNo(Number(digits)));
+  const queries = [
+    query(collection(db, "jobs"), where("jobNo", "in", Array.from(jobNos)), limit(max)),
+    ...prefixVariants(t).map((v) => prefixQuery("jobs", "customerName", v, max)),
+    prefixQuery("jobs", "customerPhone", t, max),
+    prefixQuery("jobs", "customerPhone2", t, max),
+  ];
+  const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+  const byId = new Map<string, any>();
+  for (const snap of snaps) for (const d of snap.docs) byId.set(d.id, { id: d.id, ...d.data() });
+  return Array.from(byId.values())
+    .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0))
+    .slice(0, max);
 }
 
 export async function getJob(id: string) {
@@ -1196,10 +1397,11 @@ export async function getJob(id: string) {
   };
 }
 
-// Every job in the system, each carrying its full statusHistory — powers the
-// date-range job report (all jobs + every processing activity in one shot).
-export async function getAllJobsWithHistory() {
-  const jobs = await getJobs();
+// Jobs in the report's date range, each carrying its full statusHistory —
+// powers the job report (every processing activity in one shot). Costs ~2
+// reads per job in range, so an open-ended range reads the whole history.
+export async function getAllJobsWithHistory(f?: JobFilters) {
+  const jobs = await getJobs(f);
   return Promise.all(
     jobs.map(async (job: any) => {
       const history = await getDocs(
@@ -1448,8 +1650,8 @@ export async function createGrn(data: GrnData): Promise<{ grnId: string; grnNo: 
   });
 }
 
-export async function getGrns() {
-  const snap = await getDocs(query(collection(db, "grns"), orderBy("createdAt", "desc")));
+export async function getGrns(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "grns"), ...createdAtRange(opts)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
@@ -1694,8 +1896,8 @@ export async function createStockTransfer(
   });
 }
 
-export async function getStockTransfers() {
-  const snap = await getDocs(query(collection(db, "stockTransfers"), orderBy("createdAt", "desc")));
+export async function getStockTransfers(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "stockTransfers"), ...createdAtRange(opts)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
@@ -1894,8 +2096,8 @@ export async function createStockOut(data: StockOutData): Promise<{ stockOutId: 
   });
 }
 
-export async function getStockOuts() {
-  const snap = await getDocs(query(collection(db, "stockOuts"), orderBy("createdAt", "desc")));
+export async function getStockOuts(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "stockOuts"), ...createdAtRange(opts)));
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 

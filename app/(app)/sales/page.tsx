@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { getProducts, getCustomers, addCustomer, createSale, getBatches, getAvailableUnits, getMainCategories, getSubCategories, getCurrentOpenShift, openShift, closeShift, getJobs, updateJobStatus, getServices } from "@/lib/firestore";
+import { getProducts, getCustomerByPhone, addCustomer, createSale, getBatches, getAvailableUnits, getMainCategories, getSubCategories, getCurrentOpenShift, openShift, closeShift, getJobsByStatus, updateJobStatus, getServices } from "@/lib/firestore";
 import { Product, Customer, CartItem, MainCategory, SubCategory, Shift, SalePaymentMethod, SalePaymentSplit, SALE_PAYMENT_METHODS, SALE_PAYMENT_METHOD_LABEL, jobServicesTotal, jobBillableServices, Service, JobServiceItem } from "@/types";
 import { Search, Plus, Minus, Trash2, Printer, User, X, Check, Download, Mail, Wallet, Lock, Wrench, Package, Hammer, Edit2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import { useCustomerSearch } from "@/hooks/useCustomerSearch";
 import BillPrint from "@/components/pos/BillPrint";
 import { useReactToPrint } from "react-to-print";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -28,7 +29,6 @@ export default function SalesPage() {
   const { user, userDisplayName, can } = useAuth();
   const canView = can("sales.view");
   const [products, setProducts] = useState<Product[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [mainCats, setMainCats] = useState<MainCategory[]>([]);
   const [subCats, setSubCats] = useState<SubCategory[]>([]);
   const [filterMainCat, setFilterMainCat] = useState("");
@@ -146,18 +146,20 @@ export default function SalesPage() {
     async function load() {
       // A failed services read (e.g. rules not deployed yet) must not take
       // the whole POS down with it — products/jobs still load, the tab is empty.
-      const [p, c, mc, sc, j, sv] = await Promise.all([
-        getProducts(), getCustomers(), getMainCategories(), getSubCategories(), getJobs(),
+      // Only "done" jobs are billable, and customers are searched on demand
+      // in the picker — neither loads the full history, so opening the POS
+      // doesn't get more expensive as jobs/customers pile up.
+      const [p, mc, sc, j, sv] = await Promise.all([
+        getProducts(), getMainCategories(), getSubCategories(), getJobsByStatus(["done"]),
         getServices().catch((err) => { console.error("Failed to load services:", err); return []; }),
       ]);
       setServices((sv as Service[]).filter(s => s.active !== false));
       // POS only sells from Showroom Stock — items with stock only in Stores
       // must be Transferred to Showroom first.
       setProducts(p.filter((p: any) => p.active && p.showroomStock > 0) as Product[]);
-      setCustomers(c as Customer[]);
       setMainCats(mc as MainCategory[]);
       setSubCats(sc as SubCategory[]);
-      setBillableJobs((j as any[]).filter((job) => job.status === "done"));
+      setBillableJobs(j);
     }
     load();
   }, []);
@@ -250,9 +252,7 @@ export default function SalesPage() {
     return true;
   });
 
-  const filteredCustomers = customers.filter(c =>
-    c.name.toLowerCase().includes(customerSearch.toLowerCase()) || c.phone?.includes(customerSearch)
-  );
+  const { results: filteredCustomers, searching: searchingCustomers } = useCustomerSearch(customerSearch);
 
   const filteredJobs = jobSearch
     ? billableJobs.filter(j =>
@@ -266,8 +266,11 @@ export default function SalesPage() {
     setAttachedJob(job);
     // If this job's customer already has a loyalty account, select it too —
     // otherwise the job's own name/phone/email are used at checkout.
-    const match = job.customerPhone ? customers.find(c => c.phone === job.customerPhone) : null;
-    if (match) setSelectedCustomer(match);
+    if (job.customerPhone) {
+      getCustomerByPhone(job.customerPhone)
+        .then((match) => { if (match) setSelectedCustomer(match as Customer); })
+        .catch(() => {});
+    }
     setShowJobPicker(false);
     setJobSearch("");
   };
@@ -683,7 +686,6 @@ export default function SalesPage() {
     try {
       const ref = await addCustomer(newCustomerForm);
       const newCust = { id: ref.id, ...newCustomerForm, loyaltyPoints: 0 } as Customer;
-      setCustomers([...customers, newCust]);
       setSelectedCustomer(newCust);
       setShowAddCustomer(false);
       setShowCustomerPicker(false);
@@ -1425,6 +1427,13 @@ export default function SalesPage() {
                 onChange={e => setCustomerSearch(e.target.value)}
               />
               <div className="max-h-48 overflow-y-auto divide-y divide-zinc-50">
+                {customerSearch.trim().length < 2 ? (
+                  <p className="text-xs text-zinc-400 px-3 py-2">Type at least 2 letters of the name, or the start of the phone number.</p>
+                ) : searchingCustomers ? (
+                  <p className="text-xs text-zinc-400 px-3 py-2">Searching…</p>
+                ) : filteredCustomers.length === 0 ? (
+                  <p className="text-xs text-zinc-400 px-3 py-2">No matching customer.</p>
+                ) : null}
                 {filteredCustomers.map(c => (
                   <button key={c.id} onClick={() => { setSelectedCustomer(c); setShowCustomerPicker(false); }}
                     className="w-full text-left px-3 py-2.5 hover:bg-zinc-50 transition-colors flex items-center justify-between">

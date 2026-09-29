@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { getAuditLog } from "@/lib/firestore";
+import { getAuditLog, dateInputRange } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { useAuth } from "@/hooks/useAuth";
 import { Search, X, ShieldCheck, Download } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
@@ -26,16 +27,25 @@ export default function AuditLogPage() {
   const [entries, setEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Defaults to the last 30 days, applied in the Firestore query. Clear
+  // loads the full history.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [collectionFilter, setCollectionFilter] = useState("");
   const [page, setPage] = useState(1);
   const [viewEntry, setViewEntry] = useState<any>(null);
 
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
-    getAuditLog().then((e) => { setEntries(e); setLoading(false); });
-  }, [canView]);
+    let cancelled = false;
+    setLoading(true);
+    getAuditLog(dateInputRange(fromDate, toDate)).then((e) => {
+      if (cancelled) return;
+      setEntries(e);
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);
@@ -54,11 +64,6 @@ export default function AuditLogPage() {
       e.performedByName?.toLowerCase().includes(search.toLowerCase());
     if (!matchesSearch) return false;
     if (collectionFilter && e.collectionName !== collectionFilter) return false;
-    if (fromDate || toDate) {
-      const created = e.createdAt?.toDate ? e.createdAt.toDate() : new Date(e.createdAt);
-      if (fromDate && created < new Date(`${fromDate}T00:00:00`)) return false;
-      if (toDate && created > new Date(`${toDate}T23:59:59.999`)) return false;
-    }
     return true;
   });
 

@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getStockTransfers, getStockTransfer, adminUpdateStockTransfer } from "@/lib/firestore";
+import { getStockTransfers, getStockTransfer, adminUpdateStockTransfer, dateInputRange } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { useAuth } from "@/hooks/useAuth";
 import { Search, Plus, Eye, X, ArrowLeftRight, Download, Pencil } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
@@ -18,8 +19,9 @@ export default function StockTransferPage() {
 
   const [transfers, setTransfers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Last 30 days by default, applied in the Firestore query. Clear loads all.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [viewTransfer, setViewTransfer] = useState<any>(null);
@@ -27,10 +29,15 @@ export default function StockTransferPage() {
   const [editNote, setEditNote] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const loadTransfers = () =>
+    getStockTransfers(dateInputRange(fromDate, toDate)).then((t) => { setTransfers(t); setLoading(false); });
+
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
-    getStockTransfers().then((t) => { setTransfers(t); setLoading(false); });
-  }, [canView]);
+    setLoading(true);
+    loadTransfers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);
@@ -56,7 +63,7 @@ export default function StockTransferPage() {
         { uid: user!.uid, name: userDisplayName || user?.email || "Admin" }
       );
       setViewTransfer(await getStockTransfer(viewTransfer.id));
-      await getStockTransfers().then(setTransfers);
+      await loadTransfers();
       setEditingTransfer(false);
     } finally {
       setSavingEdit(false);

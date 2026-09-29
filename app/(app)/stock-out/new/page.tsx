@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getProducts, getAvailableUnits, getJobs, createStockOut } from "@/lib/firestore";
+import { getProducts, getAvailableUnits, getJobsByStatus, createStockOut, ACTIVE_JOB_STATUSES } from "@/lib/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Product } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
@@ -41,7 +41,9 @@ export default function NewStockOutPage() {
   const [loadingUnits, setLoadingUnits] = useState(false);
 
   useEffect(() => {
-    Promise.all([getProducts(), getJobs()]).then(([p, j]) => {
+    // Parts are only issued against jobs still in the shop — delivered /
+    // written-off jobs aren't loaded, so this list doesn't grow forever.
+    Promise.all([getProducts(), getJobsByStatus(ACTIVE_JOB_STATUSES)]).then(([p, j]) => {
       setProducts(p as Product[]);
       setJobs(j as any[]);
     });

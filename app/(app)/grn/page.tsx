@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getGrns, getGrn, adminUpdateGrn, getSuppliers } from "@/lib/firestore";
+import { getGrns, getGrn, adminUpdateGrn, getSuppliers, dateInputRange } from "@/lib/firestore";
+import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { useAuth } from "@/hooks/useAuth";
 import { Search, Plus, Eye, X, PackagePlus, Download, Pencil } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
@@ -20,8 +21,9 @@ export default function GrnPage() {
   const [grns, setGrns] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  // Last 30 days by default, applied in the Firestore query. Clear loads all.
+  const [fromDate, setFromDate] = useState(daysAgoInput(DEFAULT_LIST_DAYS));
+  const [toDate, setToDate] = useState(todayInput());
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [viewGrn, setViewGrn] = useState<any>(null);
@@ -32,11 +34,18 @@ export default function GrnPage() {
   const [editItems, setEditItems] = useState<{ id: string; costPrice: string; sellingPrice: string }[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const loadGrns = () => getGrns(dateInputRange(fromDate, toDate)).then((g) => { setGrns(g); setLoading(false); });
+
+  useEffect(() => {
+    if (canView && canAdminEdit) getSuppliers().then(setSuppliers);
+  }, [canView, canAdminEdit]);
+
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
-    getGrns().then((g) => { setGrns(g); setLoading(false); });
-    if (canAdminEdit) getSuppliers().then(setSuppliers);
-  }, [canView, canAdminEdit]);
+    setLoading(true);
+    loadGrns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, fromDate, toDate]);
 
   useEffect(() => {
     setPage(1);
@@ -75,7 +84,7 @@ export default function GrnPage() {
         { uid: user!.uid, name: userDisplayName || user?.email || "Admin" }
       );
       setViewGrn(await getGrn(viewGrn.id));
-      await getGrns().then(setGrns);
+      await loadGrns();
       setEditingGrn(false);
     } finally {
       setSavingEdit(false);
