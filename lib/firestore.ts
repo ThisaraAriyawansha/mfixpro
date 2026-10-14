@@ -1412,7 +1412,7 @@ export interface JobData {
 const JOB_NO_PATTERN = /^JOB-(\d+)$/i;
 
 function formatJobNo(n: number) {
-  return `JOB-${String(n).padStart(5, "0")}`;
+  return `JOB-${String(n).padStart(4, "0")}`;
 }
 
 // Preview of the number createJob() will assign if no custom number is given.
@@ -1427,7 +1427,7 @@ export async function getNextJobNo() {
 
 // customJobNo: a number typed in by staff (e.g. continuing a paper job-book
 // sequence). Omit it to auto-generate from the counter. A custom number in
-// the JOB-00000 format that is ahead of the counter moves the counter up to
+// the JOB-0000 format that is ahead of the counter moves the counter up to
 // it, so later auto numbers never collide with it.
 export async function createJob(data: JobData, customJobNo?: string) {
   const custom = customJobNo?.trim().toUpperCase() || "";
@@ -1546,14 +1546,17 @@ export async function countJobs(f: JobFilters) {
   return snap.data().count;
 }
 
-// Server-side job lookup by job number (exact, "123" → JOB-00123), phone
+// Server-side job lookup by job number (exact, "123" → JOB-0123), phone
 // prefix, or customer-name prefix.
 export async function searchJobs(term: string, max = 20) {
   const t = term.trim();
   if (t.length < 2) return [];
   const jobNos = new Set([t.toUpperCase()]);
   const digits = t.replace(/^JOB-?/i, "");
-  if (/^\d+$/.test(digits)) jobNos.add(formatJobNo(Number(digits)));
+  if (/^\d+$/.test(digits)) {
+    jobNos.add(formatJobNo(Number(digits)));
+    jobNos.add(`JOB-${digits.padStart(5, "0")}`); // older 5-digit numbers
+  }
   const queries = [
     query(collection(db, "jobs"), where("jobNo", "in", Array.from(jobNos)), limit(max)),
     ...prefixVariants(t).map((v) => prefixQuery("jobs", "customerName", v, max)),
