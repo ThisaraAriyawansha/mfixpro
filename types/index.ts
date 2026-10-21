@@ -590,7 +590,7 @@ export function jobBillableServices(
   return lines;
 }
 
-export type JobStatus = "pending" | "ongoing" | "done" | "delivered" | "unrepairable";
+export type JobStatus = "pending" | "ongoing" | "done" | "ready" | "delivered" | "unrepairable";
 
 export interface JobStatusEntry {
   id: string;

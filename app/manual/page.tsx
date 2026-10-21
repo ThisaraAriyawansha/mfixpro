@@ -407,7 +407,8 @@ export default function ManualPage() {
             <Flow steps={[
               { label: "Job Pending", note: "Received, not started", color: "bg-amber-400" },
               { label: "Ongoing Job", note: "Being repaired", color: "bg-zinc-400" },
-              { label: "Job Done", note: "Fixed, waiting for pickup", color: "bg-green-500" },
+              { label: "Job Done", note: "Repair finished", color: "bg-green-500" },
+              { label: "Job Ready", note: "Ready for customer pickup", color: "bg-emerald-600" },
               { label: "Delivered", note: "Paid & handed back", color: "bg-blue-500" },
             ]} />
             <p className="text-sm text-zinc-600">If a device can&apos;t be fixed, set it to <b className="text-red-600">Can&apos;t Repair</b> instead.</p>

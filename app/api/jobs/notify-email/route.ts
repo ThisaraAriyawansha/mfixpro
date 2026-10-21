@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Pending",
   ongoing: "Ongoing",
   done: "Done",
+  ready: "Ready for pickup",
   delivered: "Delivered",
   unrepairable: "Unrepairable",
 };

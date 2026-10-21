@@ -1485,7 +1485,7 @@ export async function getJobs(opts?: { fromDate?: Date; toDate?: Date }) {
 
 // Jobs still in the shop (not yet delivered / written off). This set stays
 // roughly the size of the workbench, not the size of the job history.
-export const ACTIVE_JOB_STATUSES: JobStatus[] = ["pending", "ongoing", "done"];
+export const ACTIVE_JOB_STATUSES: JobStatus[] = ["pending", "ongoing", "done", "ready"];
 
 export async function getJobsByStatus(statuses: JobStatus[]) {
   const snap = await getDocs(query(collection(db, "jobs"), where("status", "in", statuses)));
@@ -1504,7 +1504,7 @@ export async function getJobsReturnedSince(fromDate: Date) {
 // One aggregation query per status — billed at ~1 read per 1,000 jobs
 // counted, instead of reading every job doc just to tally them.
 export async function getJobStatusCounts() {
-  const statuses: JobStatus[] = ["pending", "ongoing", "done", "delivered", "unrepairable"];
+  const statuses: JobStatus[] = ["pending", "ongoing", "done", "ready", "delivered", "unrepairable"];
   const counts = await Promise.all(
     statuses.map((s) => getCountFromServer(query(collection(db, "jobs"), where("status", "==", s))))
   );

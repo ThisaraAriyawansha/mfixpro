@@ -48,6 +48,7 @@ const STATUS_LABEL: Record<JobStatus, string> = {
   pending: "Job Pending",
   ongoing: "Ongoing Job",
   done: "Job Done",
+  ready: "Job Ready",
   delivered: "Delivered",
   unrepairable: "Can't Repair",
 };
@@ -56,6 +57,7 @@ const STATUS_BADGE: Record<JobStatus, string> = {
   pending: "badge-warning",
   ongoing: "badge-default",
   done: "badge-success",
+  ready: "badge-success",
   delivered: "badge-info",
   unrepairable: "badge-danger",
 };
@@ -64,6 +66,7 @@ const STATUS_DOT: Record<JobStatus, string> = {
   pending: "bg-amber-400",
   ongoing: "bg-zinc-400",
   done: "bg-green-500",
+  ready: "bg-emerald-600",
   delivered: "bg-blue-500",
   unrepairable: "bg-red-500",
 };
@@ -802,6 +805,7 @@ export default function JobsPage() {
           <option value="pending">Job Pending</option>
           <option value="ongoing">Ongoing Job</option>
           <option value="done">Job Done</option>
+          <option value="ready">Job Ready</option>
           <option value="delivered">Delivered</option>
           <option value="unrepairable">Can't Repair</option>
         </select>
@@ -1269,6 +1273,7 @@ export default function JobsPage() {
                     <option value="pending">Job Pending</option>
                     <option value="ongoing">Ongoing Job</option>
                     <option value="done">Job Done</option>
+                    <option value="ready">Job Ready</option>
                     <option value="delivered">Delivered</option>
                     <option value="unrepairable">Can't Repair</option>
                   </select>

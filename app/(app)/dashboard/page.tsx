@@ -28,7 +28,8 @@ const MIX_COLORS = ["#e30613", "#0a0a0a", "#71717a", "#d4d4d8", "#fca5a5"];
 const JOB_STAGES: { key: string; label: string; color: string }[] = [
   { key: "pending", label: "Pending", color: "#d4d4d8" },
   { key: "ongoing", label: "In repair", color: "#0a0a0a" },
-  { key: "done", label: "Ready", color: "#e30613" },
+  { key: "done", label: "Done", color: "#fca5a5" },
+  { key: "ready", label: "Ready", color: "#e30613" },
   { key: "delivered", label: "Delivered", color: "#16a34a" },
   { key: "unrepairable", label: "Unrepairable", color: "#a1a1aa" },
 ];
@@ -328,7 +329,7 @@ export default function DashboardPage() {
     const openJobs = jobs.filter((j) => j.status === "pending" || j.status === "ongoing");
     const overdue = openJobs.filter((j) => { const d = toDate(j.expectedDeliveryDate); return d && d < todayStart; });
     const ready = jobs
-      .filter((j) => j.status === "done")
+      .filter((j) => j.status === "done" || j.status === "ready")
       .map((j) => ({ ...j, waiting: Math.floor((now.getTime() - (toDate(j.createdAt)?.getTime() ?? now.getTime())) / DAY_MS) }))
       .sort((x, y) => y.waiting - x.waiting);
     const received = jobs.filter((j) => inCur(toDate(j.createdAt))).length;
@@ -337,7 +338,7 @@ export default function DashboardPage() {
     const turnaround = returned.length
       ? returned.reduce((t, j) => t + ((toDate(j.dateReturned)!.getTime() - (toDate(j.createdAt)?.getTime() ?? 0)) / DAY_MS), 0) / returned.length
       : null;
-    const closed = countOf("delivered") + countOf("unrepairable") + countOf("done");
+    const closed = countOf("delivered") + countOf("unrepairable") + countOf("done") + countOf("ready");
     const successRate = closed ? ((closed - countOf("unrepairable")) / closed) * 100 : null;
     const byTech = new Map<string, number>();
     for (const j of openJobs) {
@@ -872,7 +873,7 @@ export default function DashboardPage() {
                     {e.amount !== undefined && canViewFinance ? (
                       <p className="text-sm font-medium text-ink tabular-nums">{rs(e.amount)}</p>
                     ) : (
-                      <span className={`badge ${e.status === "done" || e.status === "paid" || e.status === "delivered" ? "badge-success" : e.status === "unrepairable" ? "badge-danger" : "badge-warning"}`}>{e.status}</span>
+                      <span className={`badge ${e.status === "done" || e.status === "ready" || e.status === "paid" || e.status === "delivered" ? "badge-success" : e.status === "unrepairable" ? "badge-danger" : "badge-warning"}`}>{e.status}</span>
                     )}
                     <p className="text-[10px] text-zinc-400">{e.when ? timeAgo(e.when) : ""}</p>
                   </div>
