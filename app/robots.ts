@@ -12,6 +12,7 @@ const privateRoutes = [
   "/dashboard",
   "/finance",
   "/grn",
+  "/home",
   "/jobs",
   "/products",
   "/profile",

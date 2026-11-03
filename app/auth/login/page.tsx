@@ -57,7 +57,7 @@ export default function LoginPage() {
         return;
       }
       await login(email, password);
-      router.push("/dashboard");
+      router.push("/home");
     } catch (err: any) {
       setError(
         err?.code === "auth/user-disabled"
