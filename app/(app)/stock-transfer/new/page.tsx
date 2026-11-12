@@ -7,6 +7,9 @@ import { Product } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import { useDraftState, clearDraft } from "@/hooks/useDraftState";
+
+const DRAFT = "stockTransferNew";
 
 interface DraftItem {
   tempId: string;
@@ -22,13 +25,14 @@ export default function NewStockTransferPage() {
   const { user, userDisplayName, can, loading: authLoading } = useAuth();
   const canCreate = can("stockTransfer.create");
   const [products, setProducts] = useState<Product[]>([]);
-  const [note, setNote] = useState("");
-  const [items, setItems] = useState<DraftItem[]>([]);
+  // Draft fields survive navigating away until the transfer is saved.
+  const [note, setNote] = useDraftState(DRAFT, "note", "");
+  const [items, setItems] = useDraftState<DraftItem[]>(DRAFT, "items", []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const [productId, setProductId] = useState("");
-  const [qty, setQty] = useState("");
+  const [productId, setProductId] = useDraftState(DRAFT, "productId", "");
+  const [qty, setQty] = useDraftState(DRAFT, "qty", "");
   const [availableUnits, setAvailableUnits] = useState<{ id: string; serialNumber: string }[]>([]);
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
@@ -103,6 +107,7 @@ export default function NewStockTransferPage() {
           serialNumbers: i.serialNumbers,
         })),
       });
+      clearDraft(DRAFT, user!.uid);
       router.push("/stock-transfer");
     } catch (err: any) {
       setError(err.message || "Failed to save transfer.");

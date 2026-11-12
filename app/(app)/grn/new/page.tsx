@@ -7,6 +7,9 @@ import { Product, Supplier, StockLocation } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import { useDraftState, clearDraft } from "@/hooks/useDraftState";
+
+const DRAFT = "grnNew";
 
 interface DraftItem {
   tempId: string;
@@ -26,18 +29,19 @@ export default function NewGrnPage() {
   const canCreate = can("grn.create");
   const [products, setProducts] = useState<Product[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [supplierId, setSupplierId] = useState("");
-  const [note, setNote] = useState("");
-  const [location, setLocation] = useState<StockLocation>("stores");
-  const [items, setItems] = useState<DraftItem[]>([]);
+  // Draft fields survive navigating away until the GRN is saved.
+  const [supplierId, setSupplierId] = useDraftState(DRAFT, "supplierId", "");
+  const [note, setNote] = useDraftState(DRAFT, "note", "");
+  const [location, setLocation] = useDraftState<StockLocation>(DRAFT, "location", "stores");
+  const [items, setItems] = useDraftState<DraftItem[]>(DRAFT, "items", []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const [productId, setProductId] = useState("");
-  const [qty, setQty] = useState("");
-  const [costPrice, setCostPrice] = useState("");
-  const [sellingPrice, setSellingPrice] = useState("");
-  const [serials, setSerials] = useState("");
+  const [productId, setProductId] = useDraftState(DRAFT, "productId", "");
+  const [qty, setQty] = useDraftState(DRAFT, "qty", "");
+  const [costPrice, setCostPrice] = useDraftState(DRAFT, "costPrice", "");
+  const [sellingPrice, setSellingPrice] = useDraftState(DRAFT, "sellingPrice", "");
+  const [serials, setSerials] = useDraftState(DRAFT, "serials", "");
 
   useEffect(() => {
     Promise.all([getProducts(), getSuppliers()]).then(([p, s]) => {
@@ -107,6 +111,7 @@ export default function NewGrnPage() {
           serials: i.trackSerial ? Array.from(new Set(i.serials.split("\n").map((s) => s.trim()).filter(Boolean))) : undefined,
         })),
       });
+      clearDraft(DRAFT, user!.uid);
       router.push("/grn");
     } catch (err: any) {
       setError(err.message || "Failed to save GRN.");

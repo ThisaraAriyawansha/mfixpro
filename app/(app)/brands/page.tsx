@@ -6,15 +6,25 @@ import { Brand } from "@/types";
 import { Plus, Edit2, Trash2, X } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import { useDraftState } from "@/hooks/useDraftState";
+
+const DRAFT = "brands";
+const EMPTY_FORM = { name: "", description: "" };
 
 export default function BrandsPage() {
   const { can } = useAuth();
   const canView = can("brands.view");
   const canDelete = can("brands.delete");
   const [brands, setBrands] = useState<Brand[]>([]);
-  const [showModal, setShowModal] = useState(false);
-  const [editing, setEditing] = useState<Brand | null>(null);
-  const [form, setForm] = useState({ name: "", description: "" });
+  // The open modal and its inputs survive navigating away; the unsaved "Add"
+  // draft also survives closing the modal, until the brand is added.
+  const [showModal, setShowModal] = useDraftState(DRAFT, "showModal", false);
+  const [editing, setEditing] = useDraftState<Brand | null>(DRAFT, "editing", null);
+  const [form, setForm] = useDraftState(DRAFT, "form", EMPTY_FORM);
+  const [addDraft, setAddDraft] = useDraftState(DRAFT, "addDraft", EMPTY_FORM);
+  useEffect(() => {
+    if (showModal && !editing) setAddDraft(form);
+  }, [form, showModal, editing]);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -25,13 +35,13 @@ export default function BrandsPage() {
     setBrands(data as Brand[]);
   }
 
-  const openAdd = () => { setEditing(null); setForm({ name: "", description: "" }); setShowModal(true); };
+  const openAdd = () => { setEditing(null); setForm(addDraft); setShowModal(true); };
   const openEdit = (b: Brand) => { setEditing(b); setForm({ name: b.name, description: b.description || "" }); setShowModal(true); };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editing) await updateBrand(editing.id, form);
-    else await addBrand(form);
+    else { await addBrand(form); setAddDraft(EMPTY_FORM); }
     setShowModal(false);
     load();
   };

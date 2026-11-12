@@ -72,6 +72,7 @@ export default function SalesPage() {
   // delivered) jobs show up here, so a job can't be attached/billed twice.
   // Legacy "done" jobs are included too, since that status was retired.
   const [billableJobs, setBillableJobs] = useState<any[]>([]);
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [attachedJob, setAttachedJob] = useState<any | null>(null);
   const [showJobPicker, setShowJobPicker] = useState(false);
   const [jobSearch, setJobSearch] = useState("");
@@ -109,6 +110,56 @@ export default function SalesPage() {
   const [closingShift, setClosingShift] = useState(false);
   const [closeShiftError, setCloseShiftError] = useState("");
   const [closeSummary, setCloseSummary] = useState<{ expectedCash: number; countedCash: number; variance: number } | null>(null);
+
+  // Draft persistence — the in-progress bill (cart, customer, payment inputs…)
+  // is mirrored to sessionStorage so navigating to another page (or the
+  // browser reloading/discarding the tab) doesn't wipe it. Keyed per user so
+  // a different login on the same browser never inherits someone's cart.
+  const draftKey = user ? `mfixpro.posDraft.${user.uid}` : null;
+  const draftRestored = useRef(false);
+
+  useEffect(() => {
+    if (!draftKey || draftRestored.current) return;
+    draftRestored.current = true;
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (Array.isArray(d.cart)) setCart(d.cart);
+      if (Array.isArray(d.serviceLines)) setServiceLines(d.serviceLines);
+      if (d.selectedCustomer) setSelectedCustomer(d.selectedCustomer);
+      if (d.attachedJob) setAttachedJob(d.attachedJob);
+      if (typeof d.discount === "number") setDiscount(d.discount);
+      if (typeof d.pointsToRedeem === "number") setPointsToRedeem(d.pointsToRedeem);
+      if (Array.isArray(d.selectedMethods) && d.selectedMethods.length) setSelectedMethods(d.selectedMethods);
+      if (d.splitAmounts && typeof d.splitAmounts === "object") setSplitAmounts(d.splitAmounts);
+      if (typeof d.chargePercent === "number") setChargePercent(d.chargePercent);
+      if (typeof d.amountTendered === "string") setAmountTendered(d.amountTendered);
+      if (typeof d.note === "string") setNote(d.note);
+      if (d.catalogTab === "products" || d.catalogTab === "services") setCatalogTab(d.catalogTab);
+      if (typeof d.productSearch === "string") setProductSearch(d.productSearch);
+      if (typeof d.serviceSearch === "string") setServiceSearch(d.serviceSearch);
+      if (typeof d.filterMainCat === "string") setFilterMainCat(d.filterMainCat);
+      if (typeof d.filterSubCat === "string") setFilterSubCat(d.filterSubCat);
+    } catch (err) {
+      console.error("Failed to restore POS draft:", err);
+    }
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!draftKey || !draftRestored.current) return;
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify({
+        cart, serviceLines, selectedCustomer, attachedJob, discount, pointsToRedeem,
+        selectedMethods, splitAmounts, chargePercent, amountTendered, note,
+        catalogTab, productSearch, serviceSearch, filterMainCat, filterSubCat,
+      }));
+    } catch {
+      // Storage full / blocked (private mode) — the POS still works, just unsaved.
+    }
+  }, [draftKey, cart, serviceLines, selectedCustomer, attachedJob, discount, pointsToRedeem,
+      selectedMethods, splitAmounts, chargePercent, amountTendered, note,
+      catalogTab, productSearch, serviceSearch, filterMainCat, filterSubCat]);
 
   async function handleDownloadBill() {
     if (!printRef.current || downloadingBill) return;
@@ -167,9 +218,18 @@ export default function SalesPage() {
       setMainCats(mc as MainCategory[]);
       setSubCats(sc as SubCategory[]);
       setBillableJobs(j);
+      setJobsLoaded(true);
     }
     load();
   }, []);
+
+  // A restored draft may reference a job that was billed/delivered elsewhere
+  // since — drop it so it can't be billed twice.
+  useEffect(() => {
+    if (jobsLoaded && attachedJob && !billableJobs.some((j: any) => j.id === attachedJob.id)) {
+      setAttachedJob(null);
+    }
+  }, [jobsLoaded, billableJobs, attachedJob]);
 
   useEffect(() => {
     async function loadShift() {

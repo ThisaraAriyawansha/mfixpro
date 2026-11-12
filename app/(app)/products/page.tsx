@@ -11,8 +11,16 @@ import { Plus, Search, Edit2, Trash2, Package, ChevronDown, X, Layers, Hash, Che
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import Pagination from "@/components/ui/Pagination";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import { useDraftState } from "@/hooks/useDraftState";
 
 const PAGE_SIZE = 10;
+const DRAFT = "products";
+const EMPTY_FORM = {
+  name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
+  sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5",
+  description: "", warrantyMonths: "0", trackSerial: false,
+};
+const EMPTY_BATCH_FORM = { costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" };
 
 export default function ProductsPage() {
   const { user, userDisplayName, can } = useAuth();
@@ -25,14 +33,16 @@ export default function ProductsPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [mainCats, setMainCats] = useState<MainCategory[]>([]);
   const [subCats, setSubCats] = useState<SubCategory[]>([]);
-  const [search, setSearch] = useState("");
-  const [filterMainCat, setFilterMainCat] = useState("");
-  const [filterSubCat, setFilterSubCat] = useState("");
+  // Search/filters and a half-filled Add/Edit Product form survive
+  // navigating away and back (cleared on Cancel / save via openAdd/openEdit).
+  const [search, setSearch] = useDraftState(DRAFT, "search", "");
+  const [filterMainCat, setFilterMainCat] = useDraftState(DRAFT, "filterMainCat", "");
+  const [filterSubCat, setFilterSubCat] = useDraftState(DRAFT, "filterSubCat", "");
   const [page, setPage] = useState(1);
-  const [showModal, setShowModal] = useState(false);
-  const [showBatchModal, setShowBatchModal] = useState<string | null>(null);
+  const [showModal, setShowModal] = useDraftState(DRAFT, "showModal", false);
+  const [showBatchModal, setShowBatchModal] = useDraftState<string | null>(DRAFT, "showBatchModal", null);
   const [batches, setBatches] = useState<any[]>([]);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingProduct, setEditingProduct] = useDraftState<Product | null>(DRAFT, "editingProduct", null);
   const [loading, setLoading] = useState(true);
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
   const [editBatchForm, setEditBatchForm] = useState({ costPrice: "", sellingPrice: "", totalQty: "", remainingQty: "", note: "" });
@@ -42,12 +52,16 @@ export default function ProductsPage() {
   const [addingBatch, setAddingBatch] = useState(false);
   const [addingSerials, setAddingSerials] = useState(false);
 
-  const [form, setForm] = useState({
-    name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
-    sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5",
-    description: "", warrantyMonths: "0", trackSerial: false,
-  });
-  const [batchForm, setBatchForm] = useState({ costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" });
+  const [form, setForm] = useDraftState(DRAFT, "form", EMPTY_FORM);
+  // The unsaved "Add Product" draft, kept apart from `form` so closing the
+  // modal (or opening an Edit in between) doesn't lose what was typed. It is
+  // only cleared once the product is actually added.
+  const [addDraft, setAddDraft] = useDraftState(DRAFT, "addDraft", EMPTY_FORM);
+  useEffect(() => {
+    if (showModal && !editingProduct) setAddDraft(form);
+  }, [form, showModal, editingProduct]);
+  const [batchForm, setBatchForm] = useDraftState(DRAFT, "batchForm", EMPTY_BATCH_FORM);
+  const [batchDrafts, setBatchDrafts] = useDraftState<Record<string, typeof EMPTY_BATCH_FORM>>(DRAFT, "batchDrafts", {});
   const [batchError, setBatchError] = useState("");
   const [savingBatchEdit, setSavingBatchEdit] = useState(false);
   const [batchEditError, setBatchEditError] = useState("");
@@ -82,7 +96,7 @@ export default function ProductsPage() {
 
   const openAdd = () => {
     setEditingProduct(null);
-    setForm({ name: "", brandId: "", mainCategoryId: "", subCategoryId: "", sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5", description: "", warrantyMonths: "0", trackSerial: false });
+    setForm(addDraft);
     setShowModal(true);
   };
 
@@ -106,10 +120,25 @@ export default function ProductsPage() {
     setManageSerialsBatch(null);
     setEditingBatchUnits([]);
     setNewSerialsForBatch("");
-    setBatchForm({ costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" });
-    const b = await getAllBatches(productId);
-    setBatches(b);
+    setBatches([]);
+    setBatchForm(batchDrafts[productId] ?? EMPTY_BATCH_FORM);
   };
+
+  // Batches are (re)fetched whenever the batch modal is open for a product —
+  // including when it was restored open after navigating back to this page.
+  useEffect(() => {
+    if (!showBatchModal) return;
+    let cancelled = false;
+    getAllBatches(showBatchModal).then((b) => { if (!cancelled) setBatches(b); });
+    return () => { cancelled = true; };
+  }, [showBatchModal]);
+
+  // Keep each product's unsaved "Add New Batch" inputs, so closing the modal
+  // or leaving the page doesn't lose them. Cleared after the batch is added.
+  useEffect(() => {
+    if (!showBatchModal) return;
+    setBatchDrafts((d) => (d[showBatchModal] === batchForm ? d : { ...d, [showBatchModal]: batchForm }));
+  }, [batchForm, showBatchModal]);
 
   const openEditBatch = (b: any) => {
     setEditingBatchId(b.id);
@@ -261,6 +290,7 @@ export default function ProductsPage() {
             qty: Number(form.totalStock),
           });
         }
+        setAddDraft(EMPTY_FORM);
       }
       setShowModal(false);
       loadData();
@@ -325,7 +355,7 @@ export default function ProductsPage() {
         note: batchForm.note,
         serials,
       });
-      setBatchForm({ costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" });
+      setBatchForm(EMPTY_BATCH_FORM);
       const b = await getAllBatches(showBatchModal);
       setBatches(b);
       loadData();

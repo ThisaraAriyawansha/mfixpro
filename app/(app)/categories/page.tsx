@@ -9,6 +9,10 @@ import { MainCategory, SubCategory } from "@/types";
 import { Plus, Edit2, Trash2, X, ChevronRight } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import { useDraftState } from "@/hooks/useDraftState";
+
+const DRAFT = "categories";
+const EMPTY_FORM = { name: "", description: "" };
 
 export default function CategoriesPage() {
   const { can } = useAuth();
@@ -16,13 +20,23 @@ export default function CategoriesPage() {
   const canDelete = can("categories.delete");
   const [mainCats, setMainCats] = useState<MainCategory[]>([]);
   const [subCats, setSubCats] = useState<SubCategory[]>([]);
-  const [selectedMain, setSelectedMain] = useState<MainCategory | null>(null);
-  const [showMainModal, setShowMainModal] = useState(false);
-  const [showSubModal, setShowSubModal] = useState(false);
-  const [editingMain, setEditingMain] = useState<MainCategory | null>(null);
-  const [editingSub, setEditingSub] = useState<SubCategory | null>(null);
-  const [mainForm, setMainForm] = useState({ name: "", description: "" });
-  const [subForm, setSubForm] = useState({ name: "", description: "" });
+  // Selection, open modals and their inputs survive navigating away; unsaved
+  // "Add" drafts also survive closing the modal, until the category is added.
+  const [selectedMain, setSelectedMain] = useDraftState<MainCategory | null>(DRAFT, "selectedMain", null);
+  const [showMainModal, setShowMainModal] = useDraftState(DRAFT, "showMainModal", false);
+  const [showSubModal, setShowSubModal] = useDraftState(DRAFT, "showSubModal", false);
+  const [editingMain, setEditingMain] = useDraftState<MainCategory | null>(DRAFT, "editingMain", null);
+  const [editingSub, setEditingSub] = useDraftState<SubCategory | null>(DRAFT, "editingSub", null);
+  const [mainForm, setMainForm] = useDraftState(DRAFT, "mainForm", EMPTY_FORM);
+  const [subForm, setSubForm] = useDraftState(DRAFT, "subForm", EMPTY_FORM);
+  const [mainAddDraft, setMainAddDraft] = useDraftState(DRAFT, "mainAddDraft", EMPTY_FORM);
+  const [subAddDraft, setSubAddDraft] = useDraftState(DRAFT, "subAddDraft", EMPTY_FORM);
+  useEffect(() => {
+    if (showMainModal && !editingMain) setMainAddDraft(mainForm);
+  }, [mainForm, showMainModal, editingMain]);
+  useEffect(() => {
+    if (showSubModal && !editingSub) setSubAddDraft(subForm);
+  }, [subForm, showSubModal, editingSub]);
   const [deleteMainId, setDeleteMainId] = useState<string | null>(null);
   const [deleteSubId, setDeleteSubId] = useState<string | null>(null);
   const [deletingMain, setDeletingMain] = useState(false);
@@ -42,7 +56,7 @@ export default function CategoriesPage() {
   const handleMainSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingMain) await updateMainCategory(editingMain.id, mainForm);
-    else await addMainCategory(mainForm);
+    else { await addMainCategory(mainForm); setMainAddDraft(EMPTY_FORM); }
     setShowMainModal(false);
     load();
   };
@@ -50,7 +64,7 @@ export default function CategoriesPage() {
   const handleSubSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingSub) await updateSubCategory(editingSub.id, subForm);
-    else await addSubCategory({ ...subForm, mainCategoryId: selectedMain!.id });
+    else { await addSubCategory({ ...subForm, mainCategoryId: selectedMain!.id }); setSubAddDraft(EMPTY_FORM); }
     setShowSubModal(false);
     load();
   };
@@ -94,7 +108,7 @@ export default function CategoriesPage() {
         <div className="nexora-card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
             <p className="font-prata text-base text-ink">Main Categories</p>
-            <button onClick={() => { setEditingMain(null); setMainForm({ name: "", description: "" }); setShowMainModal(true); }}
+            <button onClick={() => { setEditingMain(null); setMainForm(mainAddDraft); setShowMainModal(true); }}
               className="nexora-btn nexora-btn-primary text-xs py-1.5 px-3">
               <Plus size={12} /> Add
             </button>
@@ -137,7 +151,7 @@ export default function CategoriesPage() {
               {selectedMain ? `${selectedMain.name} — Subcategories` : "Subcategories"}
             </p>
             {selectedMain && (
-              <button onClick={() => { setEditingSub(null); setSubForm({ name: "", description: "" }); setShowSubModal(true); }}
+              <button onClick={() => { setEditingSub(null); setSubForm(subAddDraft); setShowSubModal(true); }}
                 className="nexora-btn nexora-btn-primary text-xs py-1.5 px-3">
                 <Plus size={12} /> Add
               </button>

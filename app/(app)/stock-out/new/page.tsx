@@ -7,6 +7,9 @@ import { Product } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import { useDraftState, clearDraft } from "@/hooks/useDraftState";
+
+const DRAFT = "stockOutNew";
 
 interface DraftItem {
   tempId: string;
@@ -24,13 +27,15 @@ export default function NewStockOutPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [jobs, setJobs] = useState<any[]>([]);
 
-  const [location, setLocation] = useState<"stores" | "showroom">("showroom");
-  const [recipient, setRecipient] = useState("");
-  const [reason, setReason] = useState<"job" | "sale" | "other">("job");
-  const [jobId, setJobId] = useState("");
-  const [reasonDetail, setReasonDetail] = useState("");
-  const [note, setNote] = useState("");
-  const [items, setItems] = useState<DraftItem[]>([]);
+  // Draft fields survive navigating away until the stock-out is saved. The
+  // in-progress product picker isn't kept — changing location resets it anyway.
+  const [location, setLocation] = useDraftState<"stores" | "showroom">(DRAFT, "location", "showroom");
+  const [recipient, setRecipient] = useDraftState(DRAFT, "recipient", "");
+  const [reason, setReason] = useDraftState<"job" | "sale" | "other">(DRAFT, "reason", "job");
+  const [jobId, setJobId] = useDraftState(DRAFT, "jobId", "");
+  const [reasonDetail, setReasonDetail] = useDraftState(DRAFT, "reasonDetail", "");
+  const [note, setNote] = useDraftState(DRAFT, "note", "");
+  const [items, setItems] = useDraftState<DraftItem[]>(DRAFT, "items", []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -135,6 +140,7 @@ export default function NewStockOutPage() {
           serialNumbers: i.serialNumbers,
         })),
       });
+      clearDraft(DRAFT, user!.uid);
       router.push("/stock-out");
     } catch (err: any) {
       setError(err.message || "Failed to save stock-out.");
