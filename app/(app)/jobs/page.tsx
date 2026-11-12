@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import JobPrint from "@/components/pos/JobPrint";
 import JobReportPrint from "@/components/pos/JobReportPrint";
+import JobsReportPrint from "@/components/pos/JobsReportPrint";
 import { useReactToPrint } from "react-to-print";
 import Pagination from "@/components/ui/Pagination";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -825,6 +826,35 @@ export default function JobsPage() {
     }
   };
 
+  // PDF version of the report above — same filters, one row per job.
+  const listReportRef = useRef<HTMLDivElement>(null);
+  const [listReport, setListReport] = useState<{ jobs: any[]; periodLabel: string; statusLabel: string } | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const handleExportPdf = async () => {
+    if (exportingPdf) return;
+    setExportingPdf(true);
+    setReportError("");
+    try {
+      const inRange = await getAllJobsWithHistory(filters);
+      const fmt = (v: string) => new Date(`${v}T00:00:00`).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+      const periodLabel = fromDate || toDate ? `${fromDate ? fmt(fromDate) : "Start"} – ${toDate ? fmt(toDate) : "Today"}` : "All dates";
+      const statusLabel = statusFilter === "all" ? "All statuses" : STATUS_LABEL[statusFilter as JobStatus] ?? statusFilter;
+      flushSync(() => setListReport({ jobs: inRange, periodLabel, statusLabel }));
+      const el = listReportRef.current;
+      if (!el) throw new Error("Report could not be prepared");
+      await Promise.all(Array.from(el.querySelectorAll("img")).map((img) => img.decode().catch(() => {})));
+      const suffix = fromDate || toDate ? `_${fromDate || "start"}_to_${toDate || "now"}` : "";
+      await downloadElementAsPdf(el, `jobs_report${suffix}.pdf`, { orientation: "landscape" });
+    } catch (err: any) {
+      console.error("Failed to export jobs PDF:", err);
+      setReportError(err?.message || "Failed to export the jobs PDF");
+    } finally {
+      setListReport(null);
+      setExportingPdf(false);
+    }
+  };
+
   if (!canView) return <AccessRestricted message="You don't have permission to view Jobs." />;
 
   return (
@@ -838,7 +868,10 @@ export default function JobsPage() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleExportReport} disabled={exportingReport} className="nexora-btn nexora-btn-outline text-sm">
-            <FileDown size={14} /> {exportingReport ? "Preparing…" : "Export Report"}
+            <FileDown size={14} /> {exportingReport ? "Preparing…" : "Export CSV"}
+          </button>
+          <button onClick={handleExportPdf} disabled={exportingPdf} className="nexora-btn nexora-btn-outline text-sm disabled:opacity-50">
+            <FileText size={14} /> {exportingPdf ? "Preparing PDF…" : "Export PDF"}
           </button>
           <button onClick={openCreate} className="nexora-btn nexora-btn-primary text-sm">
             <Plus size={14} /> New Job
@@ -940,15 +973,6 @@ export default function JobsPage() {
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => openJob(job.id)} className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs">
                         <Eye size={12} /> View
-                      </button>
-                      <button
-                        onClick={() => handleDownloadReport(job.id)}
-                        disabled={!!downloadingReportId}
-                        title="Download detailed job report (PDF)"
-                        aria-label={`Download ${job.jobNo} report`}
-                        className="nexora-btn nexora-btn-outline py-1 px-2 text-xs disabled:opacity-50"
-                      >
-                        <Download size={12} /> {downloadingReportId === job.id ? "Preparing…" : "PDF"}
                       </button>
                       {canDelete && (
                         <button
@@ -1634,6 +1658,9 @@ export default function JobsPage() {
         </div>
         <div ref={reportRef}>
           {reportJob && <JobReportPrint job={reportJob} shop={shopSettings} />}
+        </div>
+        <div ref={listReportRef}>
+          {listReport && <JobsReportPrint {...listReport} shop={shopSettings} />}
         </div>
       </div>
 

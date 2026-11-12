@@ -62,22 +62,12 @@ function rs(n: any) {
 }
 
 function StatusPill({ status, size = "md" }: { status: string; size?: "md" | "sm" }) {
+  // Dot + label, not a bordered pill: html2canvas renders text lower than the
+  // browser, which pushed pill text out of its box in the PDF.
   const c = STATUS_COLORS[status] ?? STATUS_COLORS.ongoing;
   return (
-    <span
-      style={{
-        display: "inline-block",
-        background: c.bg,
-        color: c.fg,
-        border: `1px solid ${c.border}`,
-        borderRadius: "999px",
-        padding: size === "md" ? "1.2mm 4mm" : "0.6mm 2.5mm",
-        fontSize: size === "md" ? "10pt" : "8.5pt",
-        fontWeight: 600,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {STATUS_LABEL[status] ?? status}
+    <span style={{ color: c.fg, fontSize: size === "md" ? "11pt" : "9pt", fontWeight: 600, whiteSpace: "nowrap" }}>
+      {"● "}{STATUS_LABEL[status] ?? status}
     </span>
   );
 }
@@ -86,14 +76,9 @@ function Section({ title, number, children }: { title: string; number: number; c
   return (
     <div style={{ marginBottom: "6mm" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "2.5mm", marginBottom: "3mm", paddingBottom: "1.5mm", borderBottom: `1.5px solid ${INK}` }}>
-        <span
-          style={{
-            width: "6mm", height: "6mm", borderRadius: "999px", background: ACCENT, color: "#fff",
-            fontSize: "8.5pt", fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          {number}
-        </span>
+        {/* Plain text, not a filled circle — html2canvas shifts text down
+            inside shapes, so a number in a circle renders off-centre. */}
+        <span style={{ fontSize: "11.5pt", fontWeight: 700, color: ACCENT }}>{String(number).padStart(2, "0")}</span>
         <span style={{ fontSize: "11.5pt", fontWeight: 700, letterSpacing: "0.02em", textTransform: "uppercase", color: INK }}>{title}</span>
       </div>
       {children}
