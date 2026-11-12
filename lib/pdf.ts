@@ -26,7 +26,11 @@ function findSafeBreakRow(
 // Shared by downloadElementAsPdf (saves to disk) and getElementPdfBase64
 // (attaches to an email) so the two paths can never drift in how they
 // paginate/render the element.
-async function renderElementToPdf(element: HTMLElement) {
+export interface PdfOptions {
+  orientation?: "portrait" | "landscape";
+}
+
+async function renderElementToPdf(element: HTMLElement, options: PdfOptions = {}) {
   const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
     import("html2canvas"),
     import("jspdf"),
@@ -35,7 +39,7 @@ async function renderElementToPdf(element: HTMLElement) {
   const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
   const ctx = canvas.getContext("2d")!;
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pdf = new jsPDF({ orientation: options.orientation ?? "portrait", unit: "mm", format: "a4" });
   const pageWidthMm = pdf.internal.pageSize.getWidth();
   const pageHeightMm = pdf.internal.pageSize.getHeight();
 
@@ -88,8 +92,8 @@ async function renderElementToPdf(element: HTMLElement) {
   return pdf;
 }
 
-export async function downloadElementAsPdf(element: HTMLElement, fileName: string) {
-  const pdf = await renderElementToPdf(element);
+export async function downloadElementAsPdf(element: HTMLElement, fileName: string, options?: PdfOptions) {
+  const pdf = await renderElementToPdf(element, options);
   pdf.save(fileName);
 }
 

@@ -3,15 +3,17 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import {
   getTechnicians, getJobsPage, countJobs, searchJobs, getJob, createJob, updateJobStatus, getAllJobsWithHistory, adminUpdateJob,
-  deleteJob, getNextJobNo, type JobFilters,
+  deleteJob, getNextJobNo, getShopSettings, type JobFilters,
 } from "@/lib/firestore";
+import { flushSync } from "react-dom";
 import { useCustomerSearch } from "@/hooks/useCustomerSearch";
-import type { Customer, JobStatus, JobServiceItem, JobDevicePart, UserProfile } from "@/types";
+import type { Customer, JobStatus, JobServiceItem, JobDevicePart, UserProfile, ShopSettings } from "@/types";
 import { jobServicesTotal } from "@/types";
 import {
-  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, Pencil, RotateCcw, Trash2,
+  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, FileText, Pencil, RotateCcw, Trash2,
 } from "lucide-react";
 import JobPrint from "@/components/pos/JobPrint";
+import JobReportPrint from "@/components/pos/JobReportPrint";
 import { useReactToPrint } from "react-to-print";
 import Pagination from "@/components/ui/Pagination";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -370,6 +372,41 @@ export default function JobsPage() {
       await downloadElementAsPdf(printRef.current, `${viewJob?.jobNo || "job"}.pdf`);
     } finally {
       setDownloadingJob(false);
+    }
+  };
+
+  // Detailed Job Report PDF — every field, services, payment summary and the
+  // full status history. Rendered off-screen on demand, then captured.
+  const reportRef = useRef<HTMLDivElement>(null);
+  const [reportJob, setReportJob] = useState<any>(null);
+  const [shopSettings, setShopSettings] = useState<ShopSettings>({ name: "M-Fixpro", phone: "", email: "", address: "" });
+  const [downloadingReportId, setDownloadingReportId] = useState<string | null>(null);
+  const [reportError, setReportError] = useState("");
+
+  useEffect(() => {
+    getShopSettings().then((s) => { if (s) setShopSettings(s); }).catch(() => {});
+  }, []);
+
+  const handleDownloadReport = async (jobId: string) => {
+    if (downloadingReportId) return;
+    setDownloadingReportId(jobId);
+    setReportError("");
+    try {
+      // getJob also returns the statusHistory subcollection the report needs.
+      const full: any = viewJob?.id === jobId && viewJob.statusHistory ? viewJob : await getJob(jobId);
+      if (!full) throw new Error("Job not found");
+      flushSync(() => setReportJob(full));
+      const el = reportRef.current;
+      if (!el) throw new Error("Report could not be prepared");
+      // Make sure the logo is decoded before html2canvas captures the page.
+      await Promise.all(Array.from(el.querySelectorAll("img")).map((img) => img.decode().catch(() => {})));
+      await downloadElementAsPdf(el, `${full.jobNo || "job"}-report.pdf`);
+    } catch (err: any) {
+      console.error("Failed to generate job report:", err);
+      setReportError(err?.message || "Failed to generate the job report");
+    } finally {
+      setDownloadingReportId(null);
+      setReportJob(null);
     }
   };
 
@@ -859,6 +896,13 @@ export default function JobsPage() {
         )}
       </div>
 
+      {reportError && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-600 flex items-center justify-between">
+          <span>{reportError}</span>
+          <button onClick={() => setReportError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
+
       <div className="nexora-card overflow-x-auto">
         <table className="w-full text-sm min-w-[760px]">
           <thead>
@@ -896,6 +940,15 @@ export default function JobsPage() {
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => openJob(job.id)} className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs">
                         <Eye size={12} /> View
+                      </button>
+                      <button
+                        onClick={() => handleDownloadReport(job.id)}
+                        disabled={!!downloadingReportId}
+                        title="Download detailed job report (PDF)"
+                        aria-label={`Download ${job.jobNo} report`}
+                        className="nexora-btn nexora-btn-outline py-1 px-2 text-xs disabled:opacity-50"
+                      >
+                        <Download size={12} /> {downloadingReportId === job.id ? "Preparing…" : "PDF"}
                       </button>
                       {canDelete && (
                         <button
@@ -1188,7 +1241,14 @@ export default function JobsPage() {
                   <Printer size={14} /> Print A4
                 </button>
                 <button onClick={handleDownloadJob} disabled={downloadingJob} className="nexora-btn nexora-btn-outline text-sm">
-                  <Download size={14} /> {downloadingJob ? "Downloading…" : "Download"}
+                  <Download size={14} /> {downloadingJob ? "Downloading…" : "Download Job Note"}
+                </button>
+                <button
+                  onClick={() => handleDownloadReport(viewJob.id)}
+                  disabled={!!downloadingReportId}
+                  className="nexora-btn nexora-btn-primary text-sm disabled:opacity-50"
+                >
+                  <FileText size={14} /> {downloadingReportId === viewJob.id ? "Preparing…" : "Detailed Report PDF"}
                 </button>
                 {canAdminEdit && (
                   <button onClick={openEditJob} className="nexora-btn nexora-btn-outline text-sm">
@@ -1205,6 +1265,10 @@ export default function JobsPage() {
                 )}
               </div>
             </div>
+
+            {reportError && (
+              <div className="mx-6 mt-4 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-600">{reportError}</div>
+            )}
 
             {emailNotice && (
               <div className="mx-6 mt-4 px-4 py-2.5 rounded-lg bg-zinc-50 border border-zinc-200 text-sm text-zinc-600 flex items-center justify-between">
@@ -1567,6 +1631,9 @@ export default function JobsPage() {
       <div style={{ position: "fixed", top: 0, left: "-10000px", zIndex: -1 }}>
         <div ref={printRef}>
           {viewJob && <JobPrint job={viewJob} />}
+        </div>
+        <div ref={reportRef}>
+          {reportJob && <JobReportPrint job={reportJob} shop={shopSettings} />}
         </div>
       </div>
 
