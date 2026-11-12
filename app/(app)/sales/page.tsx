@@ -83,6 +83,10 @@ export default function SalesPage() {
   const [serviceLines, setServiceLines] = useState<PosServiceLine[]>([]);
   const [serviceModal, setServiceModal] = useState<ServiceModalState | null>(null);
 
+  // Per-sale warranty override on a cart line (Admin / granted users only).
+  const canEditWarranty = can("sales.editWarranty");
+  const [warrantyModal, setWarrantyModal] = useState<{ tempId: string; months: string; note: string; error: string } | null>(null);
+
   const [downloadingBill, setDownloadingBill] = useState(false);
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ content: () => printRef.current });
@@ -483,6 +487,35 @@ export default function SalesPage() {
   };
 
   const removeItem = (tempId: string) => setCart(cart.filter(i => i.tempId !== tempId));
+
+  const openWarrantyModal = (item: CartItem) => {
+    if (!canEditWarranty) return;
+    setWarrantyModal({
+      tempId: item.tempId,
+      months: String(item.warrantyMonths ?? 0),
+      note: item.warrantyNote ?? "",
+      error: "",
+    });
+  };
+
+  // Only touches this cart line — the product's own warrantyMonths default
+  // is left alone, so the next sale starts from the catalog value again.
+  const saveWarranty = () => {
+    if (!warrantyModal || !canEditWarranty) return;
+    const months = warrantyModal.months === "" ? 0 : Number(warrantyModal.months);
+    if (!Number.isInteger(months) || months < 0 || months > 120) {
+      setWarrantyModal({ ...warrantyModal, error: "Enter whole months between 0 and 120." });
+      return;
+    }
+    const note = warrantyModal.note.trim();
+    setCart(prev => prev.map(i => {
+      if (i.tempId !== warrantyModal.tempId) return i;
+      const { warrantyNote: _old, ...rest } = i;
+      // Omit the key entirely when blank — Firestore rejects undefined values.
+      return note ? { ...rest, warrantyMonths: months, warrantyNote: note } : { ...rest, warrantyMonths: months };
+    }));
+    setWarrantyModal(null);
+  };
 
   // Card and KokoPay both charge a per-item price increase — entered as a %
   // at payment-method selection, it raises each product/service's own price
@@ -1005,10 +1038,23 @@ export default function SalesPage() {
                           ? `Serial: ${item.units.map(u => u.serialNumber).join(", ")}`
                           : item.batchId ? `Batch · Rs. ${item.costPrice?.toLocaleString()}/unit cost` : "Auto (FIFO)"}
                       </p>
+                      {((item.warrantyMonths ?? 0) > 0 || item.warrantyNote) && (
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          Warranty: {(item.warrantyMonths ?? 0) > 0 ? `${item.warrantyMonths} month${item.warrantyMonths === 1 ? "" : "s"}` : "None"}
+                          {item.warrantyNote && <span className="text-zinc-400"> · {item.warrantyNote}</span>}
+                        </p>
+                      )}
                     </div>
-                    <button onClick={() => removeItem(item.tempId)} className="text-zinc-300 hover:text-red-500 transition-colors">
-                      <X size={13} />
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {canEditWarranty && (
+                        <button onClick={() => openWarrantyModal(item)} className="text-zinc-300 hover:text-ink transition-colors" title="Edit warranty for this sale">
+                          <Edit2 size={12} />
+                        </button>
+                      )}
+                      <button onClick={() => removeItem(item.tempId)} className="text-zinc-300 hover:text-red-500 transition-colors" title="Remove">
+                        <X size={13} />
+                      </button>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center border border-zinc-200 rounded">
@@ -1602,6 +1648,53 @@ export default function SalesPage() {
                 }}
                 className="nexora-btn nexora-btn-primary w-full justify-center"
               >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Per-line warranty edit modal — changes apply to this sale only */}
+      {warrantyModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
+              <h2 className="font-prata text-base">Edit Warranty</h2>
+              <button onClick={() => setWarrantyModal(null)}><X size={16} className="text-zinc-400" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <p className="text-sm font-medium text-ink">{cart.find(i => i.tempId === warrantyModal.tempId)?.productName}</p>
+                <p className="text-xs text-zinc-400 mt-0.5">Applies to this sale only — the product's default warranty is not changed.</p>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-500 mb-1 block">Warranty period (months)</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  autoFocus
+                  className="nexora-input"
+                  placeholder="0 = no warranty"
+                  value={warrantyModal.months}
+                  onChange={e => setWarrantyModal({ ...warrantyModal, months: e.target.value, error: "" })}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-500 mb-1 block">Warranty description (optional)</label>
+                <textarea
+                  rows={3}
+                  maxLength={300}
+                  className="nexora-input resize-none"
+                  placeholder="e.g. Replacement only · Battery not covered"
+                  value={warrantyModal.note}
+                  onChange={e => setWarrantyModal({ ...warrantyModal, note: e.target.value })}
+                />
+                <p className="text-[11px] text-zinc-400 mt-1">Printed on the bill under this item and saved with the warranty record.</p>
+              </div>
+              {warrantyModal.error && <p className="text-xs text-red-500">{warrantyModal.error}</p>}
+              <button onClick={saveWarranty} className="nexora-btn nexora-btn-primary w-full justify-center">
                 Apply
               </button>
             </div>

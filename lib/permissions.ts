@@ -13,6 +13,7 @@
 export type PermissionKey =
   | "dashboard.view"
   | "sales.view"
+  | "sales.editWarranty"
   | "grn.create"
   | "grn.edit"
   | "grn.view"
@@ -96,6 +97,10 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   { key: "dashboard.view", label: "View Dashboard", module: "Dashboard", ruleEnforced: false },
 
   { key: "sales.view", label: "View POS / New Sale", module: "POS / Sales", ruleEnforced: false },
+  // UI-only: shows the per-line warranty edit button in the POS cart. Not a
+  // `.view` key, so it defaults false for every non-Admin role — Admin/Super
+  // Admin get it, others only if granted from Settings > Team.
+  { key: "sales.editWarranty", label: "Edit product warranty on a sale", module: "POS / Sales", ruleEnforced: false },
 
   { key: "grn.view", label: "View GRN", module: "GRN", ruleEnforced: true },
   { key: "grn.create", label: "Create GRN", module: "GRN", ruleEnforced: true },

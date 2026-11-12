@@ -97,6 +97,9 @@ export default function BillPrint({ sale }: BillPrintProps) {
                 {item.warrantyMonths > 0 && (
                   <div style={{ fontSize: "7.5pt", color: "#555" }}>Warranty: {item.warrantyMonths} month{item.warrantyMonths > 1 ? "s" : ""}</div>
                 )}
+                {item.warrantyNote && (
+                  <div style={{ fontSize: "7.5pt", color: "#555" }}>{item.warrantyNote}</div>
+                )}
               </td>
               <td style={{ padding: "1.2mm 2mm", fontSize: "10pt", textAlign: "center" }}>{item.qty}</td>
               <td style={{ padding: "1.2mm 2mm", fontSize: "10pt", textAlign: "right" }}>Rs. {item.unitPrice?.toLocaleString()}</td>

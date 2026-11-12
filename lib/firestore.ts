@@ -538,6 +538,7 @@ export interface SaleItem {
   discount: number;
   lineTotal: number;
   warrantyMonths?: number;
+  warrantyNote?: string;
   units?: { unitId: string; serialNumber: string; batchId: string }[];
   batchAllocations?: { batchId: string; qty: number }[];
 }
@@ -846,6 +847,7 @@ export async function createSale(data: SaleData) {
             createdAt: serverTimestamp(),
           };
           if (unit?.serialNumber) payload.serialNumber = unit.serialNumber;
+          if (item.warrantyNote) payload.warrantyNote = item.warrantyNote;
           tx.set(wRef, payload);
         }
       }

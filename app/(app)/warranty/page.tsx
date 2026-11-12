@@ -224,7 +224,10 @@ export default function WarrantyPage() {
                 return (
                   <tr key={w.id} className="hover:bg-zinc-50 transition-colors">
                     <td className="px-4 py-3 font-medium text-ink">{w.customerName}</td>
-                    <td className="px-4 py-3 text-zinc-600">{w.productName}</td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {w.productName}
+                      {w.warrantyNote && <p className="text-xs text-zinc-400 mt-0.5">{w.warrantyNote}</p>}
+                    </td>
                     <td className="px-4 py-3 text-zinc-400 text-xs font-mono">{w.serialNumber || "—"}</td>
                     <td className="px-4 py-3 text-zinc-500 text-xs">{formatDate(w.startDate)}</td>
                     <td className="px-4 py-3 text-zinc-500 text-xs">{formatDate(w.endDate)}</td>

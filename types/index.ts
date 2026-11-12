@@ -174,6 +174,8 @@ export interface SaleItem {
   discount: number;
   lineTotal: number;
   warrantyMonths?: number;
+  /** Sale-specific warranty terms typed at the POS (e.g. "Replacement only"). */
+  warrantyNote?: string;
   units?: SaleItemUnit[];
   batchAllocations?: { batchId: string; qty: number }[];
 }
@@ -427,6 +429,7 @@ export interface Warranty {
   saleId: string;
   serialNumber?: string;
   warrantyMonths: number;
+  warrantyNote?: string;
   startDate: any;
   endDate: any;
   status: "active" | "expired" | "claimed";
