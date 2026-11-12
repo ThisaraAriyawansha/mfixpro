@@ -31,6 +31,8 @@ interface EmailPrompt {
 }
 
 const PAGE_SIZE = 10;
+// Temporarily hide the "Detailed Report PDF" button in the job view modal
+const SHOW_DETAILED_REPORT_BTN = false;
 
 const DEVICE_TYPES = ["Desktop", "Laptop", "Printer", "Monitor", "CCTV", "Other"];
 const ACCESSORY_OPTIONS = ["Charger", "Power Cable", "Battery", "Adapter", "Bag", "Mouse", "Keyboard", "HDD/SSD"];
@@ -1267,13 +1269,16 @@ export default function JobsPage() {
                 <button onClick={handleDownloadJob} disabled={downloadingJob} className="nexora-btn nexora-btn-outline text-sm">
                   <Download size={14} /> {downloadingJob ? "Downloading…" : "Download Job Note"}
                 </button>
-                <button
-                  onClick={() => handleDownloadReport(viewJob.id)}
-                  disabled={!!downloadingReportId}
-                  className="nexora-btn nexora-btn-primary text-sm disabled:opacity-50"
-                >
-                  <FileText size={14} /> {downloadingReportId === viewJob.id ? "Preparing…" : "Detailed Report PDF"}
-                </button>
+                {/* Temporarily hidden — set SHOW_DETAILED_REPORT_BTN to true to restore */}
+                {SHOW_DETAILED_REPORT_BTN && (
+                  <button
+                    onClick={() => handleDownloadReport(viewJob.id)}
+                    disabled={!!downloadingReportId}
+                    className="nexora-btn nexora-btn-primary text-sm disabled:opacity-50"
+                  >
+                    <FileText size={14} /> {downloadingReportId === viewJob.id ? "Preparing…" : "Detailed Report PDF"}
+                  </button>
+                )}
                 {canAdminEdit && (
                   <button onClick={openEditJob} className="nexora-btn nexora-btn-outline text-sm">
                     <Pencil size={14} /> Edit Job
