@@ -68,8 +68,9 @@ export default function SalesPage() {
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
 
-  // Jobs ready to be billed & handed back — only "done" (repaired, not yet
+  // Jobs ready to be billed & handed back — only "ready" (repaired, not yet
   // delivered) jobs show up here, so a job can't be attached/billed twice.
+  // Legacy "done" jobs are included too, since that status was retired.
   const [billableJobs, setBillableJobs] = useState<any[]>([]);
   const [attachedJob, setAttachedJob] = useState<any | null>(null);
   const [showJobPicker, setShowJobPicker] = useState(false);
@@ -152,11 +153,11 @@ export default function SalesPage() {
     async function load() {
       // A failed services read (e.g. rules not deployed yet) must not take
       // the whole POS down with it — products/jobs still load, the tab is empty.
-      // Only "done" jobs are billable, and customers are searched on demand
-      // in the picker — neither loads the full history, so opening the POS
-      // doesn't get more expensive as jobs/customers pile up.
+      // Only "ready" (plus legacy "done") jobs are billable, and customers are
+      // searched on demand in the picker — neither loads the full history, so
+      // opening the POS doesn't get more expensive as jobs/customers pile up.
       const [p, mc, sc, j, sv] = await Promise.all([
-        getProducts(), getMainCategories(), getSubCategories(), getJobsByStatus(["done"]),
+        getProducts(), getMainCategories(), getSubCategories(), getJobsByStatus(["ready", "done"]),
         getServices().catch((err) => { console.error("Failed to load services:", err); return []; }),
       ]);
       setServices((sv as Service[]).filter(s => s.active !== false));
@@ -1367,7 +1368,7 @@ export default function SalesPage() {
               <div className="max-h-64 overflow-y-auto divide-y divide-zinc-50">
                 {filteredJobs.length === 0 ? (
                   <p className="text-xs text-zinc-400 text-center py-4">
-                    {jobSearch ? "No matching completed jobs" : "No jobs are ready for billing yet — a job must be marked \"Job Done\" first."}
+                    {jobSearch ? "No matching completed jobs" : "No jobs are ready for billing yet — a job must be marked \"Job Ready\" first."}
                   </p>
                 ) : (
                   filteredJobs.map(j => (

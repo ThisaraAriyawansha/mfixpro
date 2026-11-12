@@ -204,15 +204,19 @@ service cloud.firestore {
 
     match /jobs/{id} {
       allow read, create, update: if isAuth();
-      allow delete: if isAdminOrAbove();
+      // jobs.delete (lib/permissions.ts) — Admin by default, grantable to
+      // other roles from Settings > Team. deleteJob() also purges the
+      // statusHistory below in the same batch.
+      allow delete: if isAdminOrAbove() || hasPerm('jobs.delete');
 
       // Every job status change is logged here — an audit trail, so entries
-      // are append-only for regular staff (no update/delete). Admin+ can
-      // still delete them, same as saleItems, so the Settings "Clean
-      // Collection" tool can purge a job's history along with the job itself.
+      // are append-only for regular staff (no update). Admin+ (or anyone
+      // holding jobs.delete) can delete them, so deleting a job or the
+      // Settings "Clean Collection" tool can purge its history too.
       match /statusHistory/{entryId} {
         allow read, create: if isAuth();
-        allow update, delete: if isAdminOrAbove();
+        allow update: if isAdminOrAbove();
+        allow delete: if isAdminOrAbove() || hasPerm('jobs.delete');
       }
     }
     match /warranties/{id} { allow read, create, update: if isAuth(); allow delete: if isAdminOrAbove(); }
@@ -441,7 +445,14 @@ service cloud.firestore {
     // leave the door open wider than that at the rules layer.
     match /auditLog/{id} {
       allow read: if isAuth();
-      allow create, update, delete: if isAdminOrAbove();
+      // Second disjunct: a non-Admin granted jobs.delete must be able to log
+      // their own job deletion (deleteJob writes it in the same batch) — and
+      // only that: a jobs entry, attributed to themselves.
+      allow create: if isAdminOrAbove() ||
+        (hasPerm('jobs.delete')
+          && request.resource.data.collectionName == 'jobs'
+          && request.resource.data.performedById == request.auth.uid);
+      allow update, delete: if isAdminOrAbove();
     }
 
     // Shop info shown on printed bills/quotations — readable by all staff,

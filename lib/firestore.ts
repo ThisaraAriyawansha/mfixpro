@@ -1669,6 +1669,38 @@ export async function adminUpdateJob(
   });
 }
 
+// Permanently removes a job, its statusHistory entries, and records who did
+// it in the auditLog — all in one atomic batch. Refuses jobs already linked
+// to a salary commission payment, since deleting one would leave that
+// payment pointing at a job that no longer exists.
+export async function deleteJob(jobId: string, performedBy: { uid: string; name: string }) {
+  const jobRef = doc(db, "jobs", jobId);
+  const jobSnap = await getDoc(jobRef);
+  if (!jobSnap.exists()) throw new Error("Job not found");
+  const job = jobSnap.data() as any;
+  if (job.commissionPaymentId) {
+    throw new Error(`${job.jobNo} is linked to a salary commission payment — delete that payment first.`);
+  }
+  const history = await getDocs(collection(db, "jobs", jobId, "statusHistory"));
+
+  const batch = writeBatch(db);
+  history.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(jobRef);
+  batch.set(doc(collection(db, "auditLog")), {
+    collectionName: "jobs",
+    docId: jobId,
+    label: job.jobNo,
+    action: "delete",
+    changes: [
+      { field: "deleted", before: `${job.jobNo} · ${job.customerName || ""}`.trim(), after: null },
+    ],
+    performedById: performedBy.uid,
+    performedByName: performedBy.name,
+    createdAt: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
 // ─── STOCK MOVEMENTS ──────────────────────────────────────────────────────────
 
 export async function getStockMovements(opts?: {

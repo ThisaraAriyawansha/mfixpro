@@ -407,8 +407,7 @@ export default function ManualPage() {
             <Flow steps={[
               { label: "Job Pending", note: "Received, not started", color: "bg-amber-400" },
               { label: "Ongoing Job", note: "Being repaired", color: "bg-zinc-400" },
-              { label: "Job Done", note: "Repair finished", color: "bg-green-500" },
-              { label: "Job Ready", note: "Ready for customer pickup", color: "bg-emerald-600" },
+              { label: "Job Ready", note: "Repaired, ready for pickup & billing", color: "bg-emerald-600" },
               { label: "Delivered", note: "Paid & handed back", color: "bg-blue-500" },
             ]} />
             <p className="text-sm text-zinc-600">If a device can&apos;t be fixed, set it to <b className="text-red-600">Can&apos;t Repair</b> instead.</p>
@@ -434,7 +433,7 @@ export default function ManualPage() {
                 <>In <B>Jobs</B>, find the job. Search by job no., customer name or phone, or filter by status or date.</>,
                 <>Press the <b>eye icon</b> to open it.</>,
                 <>Under <b>Update Job Status</b>, choose the new status.</>,
-                <>When the repair is finished, choose <B>Job Done</B> and type the final <b>Repair cost</b>. If you added services, you can press <B>Use services total</B> to fill it in.</>,
+                <>When the repair is finished, choose <B>Job Ready</B> and type the final <b>Repair cost</b>. If you added services, you can press <B>Use services total</B> to fill it in.</>,
                 <>Write a short note about what was done, then press <B>Save Update</B>.</>,
                 <>If the customer has an email, you can send them the status update by email.</>,
               ]} />
@@ -454,7 +453,7 @@ export default function ManualPage() {
             intro="When the customer comes to collect a repaired device, you take payment on the POS screen.">
             <Sub title="Step by step">
               <Steps items={[
-                <>Make sure the job is set to <B>Job Done</B> with a repair cost (see above).</>,
+                <>Make sure the job is set to <B>Job Ready</B> with a repair cost (see above).</>,
                 <>Go to <B>POS / New Sale</B> and press <B>Find Job to Bill</B>.</>,
                 <>Search by job no., customer name or mobile number, and tap the job.</>,
                 <>The job&apos;s charges appear in the cart: services, any repair charge, and <b>&quot;Less: advance paid&quot;</b> if the customer paid something at drop-off.</>,
@@ -462,7 +461,7 @@ export default function ManualPage() {
                 <>Choose the payment method and press <B>Checkout</B>. Print or email the bill.</>,
               ]} />
               <p className="text-sm text-zinc-600"><b>What happens:</b> the job is automatically changed to <b>Delivered</b> and can&apos;t be billed twice.</p>
-              <Tip>Only jobs marked <b>Job Done</b> appear in <B>Find Job to Bill</B>. If a job is missing, check its status first.</Tip>
+              <Tip>Only jobs marked <b>Job Ready</b> appear in <B>Find Job to Bill</B>. If a job is missing, check its status first.</Tip>
             </Sub>
           </Section>
 
@@ -744,7 +743,7 @@ export default function ManualPage() {
             {[
               ["The Checkout button is grey and won't work.", "You probably don't have an open shift. Open one at the top of the POS screen. For a split payment, the amounts must add up exactly (it must say \"Balanced\")."],
               ["A product isn't showing on the POS.", "It either has no Showroom stock (do a Stock Transfer from Stores) or is set to Inactive in Products."],
-              ["I can't find a job under \"Find Job to Bill\".", "Only jobs with the status \"Job Done\" appear. Open the job in Jobs and update its status first."],
+              ["I can't find a job under \"Find Job to Bill\".", "Only jobs with the status \"Job Ready\" appear. Open the job in Jobs and update its status first."],
               ["A page is missing from my menu, or it says \"Access Restricted\".", "Your role doesn't have access to it. Ask your Admin to switch it on for you in Settings → Team."],
               ["I made a mistake on a bill.", "For the customer name, phone, email or payment method, use Edit Bill. For wrong items or amounts, the bill must be reversed and made again. Ask someone with permission."],
               ["The drawer shows a variance at closing.", "Check that every cash payout was recorded as an expense against your shift, and that every sale went through the correct payment method. Add a note explaining the difference."],

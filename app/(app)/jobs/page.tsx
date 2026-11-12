@@ -3,13 +3,13 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import {
   getTechnicians, getJobsPage, countJobs, searchJobs, getJob, createJob, updateJobStatus, getAllJobsWithHistory, adminUpdateJob,
-  getNextJobNo, type JobFilters,
+  deleteJob, getNextJobNo, type JobFilters,
 } from "@/lib/firestore";
 import { useCustomerSearch } from "@/hooks/useCustomerSearch";
 import type { Customer, JobStatus, JobServiceItem, JobDevicePart, UserProfile } from "@/types";
 import { jobServicesTotal } from "@/types";
 import {
-  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, Pencil, RotateCcw,
+  Search, Printer, Eye, X, Plus, Wrench, Download, FileDown, Pencil, RotateCcw, Trash2,
 } from "lucide-react";
 import JobPrint from "@/components/pos/JobPrint";
 import { useReactToPrint } from "react-to-print";
@@ -309,6 +309,7 @@ export default function JobsPage() {
   const { user, userDisplayName, can } = useAuth();
   const canView = can("jobs.view");
   const canAdminEdit = can("jobs.edit");
+  const canDelete = can("jobs.delete");
   // Only the current page of jobs is held here — pages are fetched from
   // Firestore one at a time (see loadPage), not sliced out of the full list.
   const [jobs, setJobs] = useState<any[]>([]);
@@ -349,6 +350,10 @@ export default function JobsPage() {
   const [editJobForm, setEditJobForm] = useState(emptyForm());
   const [savingJobEdit, setSavingJobEdit] = useState(false);
   const [jobEditError, setJobEditError] = useState("");
+
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; jobNo: string; customerName?: string } | null>(null);
+  const [deletingJob, setDeletingJob] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const [emailPrompt, setEmailPrompt] = useState<EmailPrompt | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -582,7 +587,9 @@ export default function JobsPage() {
   const openJob = async (id: string) => {
     const full = await getJob(id);
     setViewJob(full);
-    setNewStatus((full as any)?.status || "pending");
+    // "done" is retired — older jobs still carrying it are shown as "ready".
+    const currentStatus = (full as any)?.status;
+    setNewStatus(currentStatus === "done" ? "ready" : currentStatus || "pending");
     setStatusNote("");
     setStatusCost(full && (full as any).repairCost != null ? String((full as any).repairCost) : "");
     setStatusError("");
@@ -668,6 +675,23 @@ export default function JobsPage() {
       setJobEditError(err?.message || "Failed to save changes");
     } finally {
       setSavingJobEdit(false);
+    }
+  };
+
+  const handleDeleteJob = async () => {
+    if (!deleteTarget || !user) return;
+    setDeletingJob(true);
+    setDeleteError("");
+    try {
+      await deleteJob(deleteTarget.id, { uid: user.uid, name: userDisplayName || user.email || "Staff" });
+      if (viewJob?.id === deleteTarget.id) setViewJob(null);
+      setSearchResults((r) => (r ? r.filter((j) => j.id !== deleteTarget.id) : r));
+      setDeleteTarget(null);
+      await loadJobs();
+    } catch (err: any) {
+      setDeleteError(err?.message || "Failed to delete the job");
+    } finally {
+      setDeletingJob(false);
     }
   };
 
@@ -804,7 +828,6 @@ export default function JobsPage() {
           <option value="all">All Statuses</option>
           <option value="pending">Job Pending</option>
           <option value="ongoing">Ongoing Job</option>
-          <option value="done">Job Done</option>
           <option value="ready">Job Ready</option>
           <option value="delivered">Delivered</option>
           <option value="unrepairable">Can't Repair</option>
@@ -870,9 +893,21 @@ export default function JobsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <button onClick={() => openJob(job.id)} className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs">
-                      <Eye size={12} /> View
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => openJob(job.id)} className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs">
+                        <Eye size={12} /> View
+                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => { setDeleteError(""); setDeleteTarget({ id: job.id, jobNo: job.jobNo, customerName: job.customerName }); }}
+                          title="Delete job"
+                          aria-label={`Delete ${job.jobNo}`}
+                          className="nexora-btn nexora-btn-ghost py-1 px-2 text-xs text-red-500 hover:text-red-600"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -1160,6 +1195,14 @@ export default function JobsPage() {
                     <Pencil size={14} /> Edit Job
                   </button>
                 )}
+                {canDelete && (
+                  <button
+                    onClick={() => { setDeleteError(""); setDeleteTarget({ id: viewJob.id, jobNo: viewJob.jobNo, customerName: viewJob.customerName }); }}
+                    className="nexora-btn nexora-btn-outline text-sm text-red-600 border-red-200 hover:bg-red-50"
+                  >
+                    <Trash2 size={14} /> Delete Job
+                  </button>
+                )}
               </div>
             </div>
 
@@ -1272,7 +1315,6 @@ export default function JobsPage() {
                   >
                     <option value="pending">Job Pending</option>
                     <option value="ongoing">Ongoing Job</option>
-                    <option value="done">Job Done</option>
                     <option value="ready">Job Ready</option>
                     <option value="delivered">Delivered</option>
                     <option value="unrepairable">Can't Repair</option>
@@ -1539,6 +1581,20 @@ export default function JobsPage() {
         loading={sendingEmail}
         onConfirm={confirmSendEmail}
         onCancel={() => setEmailPrompt(null)}
+      />
+
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={`Delete ${deleteTarget?.jobNo ?? "job"}?`}
+        message={
+          deleteError
+            ? deleteError
+            : `This permanently removes ${deleteTarget?.jobNo ?? "this job"}${deleteTarget?.customerName ? ` (${deleteTarget.customerName})` : ""} and its full status history. This can't be undone.`
+        }
+        confirmText="Delete Job"
+        loading={deletingJob}
+        onConfirm={handleDeleteJob}
+        onCancel={() => { setDeleteTarget(null); setDeleteError(""); }}
       />
     </div>
   );

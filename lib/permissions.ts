@@ -48,6 +48,7 @@ export type PermissionKey =
   | "auditLog.view"
   | "jobs.view"
   | "jobs.edit"
+  | "jobs.delete"
   | "quotations.view"
   | "quotations.delete"
   | "brands.view"
@@ -151,6 +152,9 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
 
   { key: "jobs.view", label: "View Jobs", module: "Jobs", ruleEnforced: false },
   { key: "jobs.edit", label: "Edit job details", module: "Jobs", ruleEnforced: false },
+  // Deletes the job doc plus its statusHistory and writes an auditLog entry.
+  // Not a `.view` key, so it defaults false for every non-Admin role.
+  { key: "jobs.delete", label: "Delete job", module: "Jobs", ruleEnforced: true },
 
   { key: "quotations.view", label: "View Quotations", module: "Quotations", ruleEnforced: true },
   { key: "quotations.delete", label: "Delete quotation", module: "Quotations", ruleEnforced: true },
