@@ -543,8 +543,8 @@ export default function ProductsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Sub Category</label>
-                <select className="nexora-input" required value={form.subCategoryId} onChange={e => setForm({...form, subCategoryId: e.target.value})}>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Sub Category <span className="normal-case tracking-normal text-zinc-400">(optional)</span></label>
+                <select className="nexora-input" value={form.subCategoryId} onChange={e => setForm({...form, subCategoryId: e.target.value})}>
                   <option value="">Select</option>
                   {filteredSubCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
