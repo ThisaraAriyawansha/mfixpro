@@ -1402,6 +1402,10 @@ export default function SalesPage() {
                       value={serviceModal.costPrice}
                       onChange={e => setServiceModal({ ...serviceModal, costPrice: e.target.value, error: "" })}
                     />
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Applies to this sale only — the service&apos;s saved cost{" "}
+                      (Rs. {Number(serviceModal.service.costPrice || 0).toLocaleString()}) is not changed.
+                    </p>
                   </div>
                 )}
 
