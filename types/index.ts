@@ -22,7 +22,10 @@ export interface ServiceField {
 export interface Service {
   id: string;
   name: string;
+  /** Selling price charged to the customer. */
   defaultPrice: number;
+  /** Internal cost to the shop — only shown to users with services.viewCost. */
+  costPrice?: number;
   description?: string;
   customFields: ServiceField[];
   active: boolean;
@@ -545,6 +548,8 @@ export interface JobServiceItem {
   freeReason?: string;
   serviceId?: string;
   fields?: { label: string; value: string }[];
+  /** Internal cost of a quick service — never printed on the customer's bill. */
+  costPrice?: number;
 }
 
 // An internal part recorded at intake (e.g. RAM 8GB DDR4, SSD 512GB + its

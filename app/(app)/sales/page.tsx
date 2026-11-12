@@ -21,6 +21,7 @@ type ServiceModalState = {
   service: Service;
   editingId: string | null;
   price: string;
+  costPrice: string;
   values: Record<string, string | boolean>;
   error: string;
 };
@@ -28,6 +29,7 @@ type ServiceModalState = {
 export default function SalesPage() {
   const { user, userDisplayName, can } = useAuth();
   const canView = can("sales.view");
+  const canViewServiceCost = can("services.viewCost");
   const [products, setProducts] = useState<Product[]>([]);
   const [mainCats, setMainCats] = useState<MainCategory[]>([]);
   const [subCats, setSubCats] = useState<SubCategory[]>([]);
@@ -289,6 +291,7 @@ export default function SalesPage() {
       service,
       editingId: line?.id ?? null,
       price: String(line ? line.price : service.defaultPrice ?? 0),
+      costPrice: String(line ? line.costPrice ?? 0 : service.costPrice ?? 0),
       values,
       error: "",
     });
@@ -302,6 +305,15 @@ export default function SalesPage() {
     const price = Number(serviceModal.price);
     if (serviceModal.price === "" || isNaN(price) || price < 0) {
       setServiceModal({ ...serviceModal, error: "Enter a valid price." });
+      return;
+    }
+    // Only cost-permitted users can change the cost; everyone else silently
+    // carries the catalog cost so profit reports stay accurate.
+    const costPrice = canViewServiceCost
+      ? (serviceModal.costPrice === "" ? 0 : Number(serviceModal.costPrice))
+      : Number(service.costPrice) || 0;
+    if (isNaN(costPrice) || costPrice < 0) {
+      setServiceModal({ ...serviceModal, error: "Enter a valid cost price." });
       return;
     }
     const fields: { label: string; value: string }[] = [];
@@ -330,6 +342,7 @@ export default function SalesPage() {
       serviceId: service.id,
       name: service.name,
       price,
+      costPrice,
       chargeType: "paid",
       fields,
       service,
@@ -1368,6 +1381,29 @@ export default function SalesPage() {
                     onChange={e => setServiceModal({ ...serviceModal, price: e.target.value, error: "" })}
                   />
                 </div>
+
+                {canViewServiceCost && (
+                  <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50 p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs text-zinc-500">Cost Price (Rs.) · internal</label>
+                      <span className="text-xs text-zinc-500">
+                        Profit{" "}
+                        <span className={(Number(serviceModal.price) || 0) - (Number(serviceModal.costPrice) || 0) < 0 ? "text-red-500" : "text-green-600"}>
+                          Rs. {((Number(serviceModal.price) || 0) - (Number(serviceModal.costPrice) || 0)).toLocaleString()}
+                        </span>
+                      </span>
+                    </div>
+                    <input
+                      className="nexora-input"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0"
+                      value={serviceModal.costPrice}
+                      onChange={e => setServiceModal({ ...serviceModal, costPrice: e.target.value, error: "" })}
+                    />
+                  </div>
+                )}
 
                 {(serviceModal.service.customFields || []).map(f => {
                   const value = serviceModal.values[f.id];

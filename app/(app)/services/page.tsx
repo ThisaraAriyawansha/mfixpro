@@ -35,6 +35,7 @@ type DraftField = {
 type FormState = {
   name: string;
   defaultPrice: string;
+  costPrice: string;
   description: string;
   active: boolean;
   fields: DraftField[];
@@ -46,7 +47,7 @@ const emptyField = (): DraftField => ({
   id: newId(), label: "", type: "text", required: false, placeholder: "", optionsText: "",
 });
 
-const emptyForm = (): FormState => ({ name: "", defaultPrice: "", description: "", active: true, fields: [] });
+const emptyForm = (): FormState => ({ name: "", defaultPrice: "", costPrice: "", description: "", active: true, fields: [] });
 
 const toDraft = (f: ServiceField): DraftField => ({
   id: f.id,
@@ -70,6 +71,7 @@ export default function ServicesPage() {
   const canView = can("services.view");
   const canEdit = can("services.edit");
   const canDelete = can("services.delete");
+  const canViewCost = can("services.viewCost");
 
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,6 +124,7 @@ export default function ServicesPage() {
     setForm({
       name: s.name,
       defaultPrice: String(s.defaultPrice ?? ""),
+      costPrice: s.costPrice != null ? String(s.costPrice) : "",
       description: s.description || "",
       active: s.active !== false,
       fields: (s.customFields || []).map(toDraft),
@@ -150,7 +153,9 @@ export default function ServicesPage() {
 
     const price = Number(form.defaultPrice);
     if (!form.name.trim()) return setFormError("Service name is required.");
-    if (form.defaultPrice === "" || isNaN(price) || price < 0) return setFormError("Enter a valid default price.");
+    if (form.defaultPrice === "" || isNaN(price) || price < 0) return setFormError("Enter a valid selling price.");
+    const cost = form.costPrice === "" ? 0 : Number(form.costPrice);
+    if (canViewCost && (isNaN(cost) || cost < 0)) return setFormError("Enter a valid cost price.");
 
     const labels = new Set<string>();
     for (const d of form.fields) {
@@ -169,6 +174,9 @@ export default function ServicesPage() {
       active: form.active,
       customFields: form.fields.map(toField),
     };
+    // Users without the cost permission never send costPrice, so editing a
+    // service leaves the existing cost untouched.
+    if (canViewCost) data.costPrice = cost;
 
     setSaving(true);
     try {
@@ -243,7 +251,8 @@ export default function ServicesPage() {
           <thead>
             <tr className="border-b border-zinc-100">
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Service</th>
-              <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Default Price</th>
+              <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Selling Price</th>
+              {canViewCost && <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Cost</th>}
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Custom Fields</th>
               <th className="text-left px-4 py-3 text-xs text-zinc-500 font-medium uppercase tracking-wider">Status</th>
               <th className="px-4 py-3"></th>
@@ -251,12 +260,12 @@ export default function ServicesPage() {
           </thead>
           <tbody className="divide-y divide-zinc-50">
             {loading ? (
-              <tr><td colSpan={5} className="text-center py-10 text-zinc-400">Loading…</td></tr>
+              <tr><td colSpan={canViewCost ? 6 : 5} className="text-center py-10 text-zinc-400">Loading…</td></tr>
             ) : loadError ? (
-              <tr><td colSpan={5} className="text-center py-10 text-red-500">{loadError}</td></tr>
+              <tr><td colSpan={canViewCost ? 6 : 5} className="text-center py-10 text-red-500">{loadError}</td></tr>
             ) : filtered.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-10 text-zinc-400">
+                <td colSpan={canViewCost ? 6 : 5} className="text-center py-10 text-zinc-400">
                   {services.length === 0 ? "No services yet. Add your first service." : "No services found"}
                 </td>
               </tr>
@@ -271,6 +280,11 @@ export default function ServicesPage() {
                       {s.description && <p className="text-xs text-zinc-400">{s.description}</p>}
                     </td>
                     <td className="px-4 py-3 font-medium whitespace-nowrap">Rs. {Number(s.defaultPrice || 0).toLocaleString()}</td>
+                    {canViewCost && (
+                      <td className="px-4 py-3 whitespace-nowrap text-zinc-600">
+                        {s.costPrice != null ? `Rs. ${Number(s.costPrice).toLocaleString()}` : <span className="text-zinc-300">—</span>}
+                      </td>
+                    )}
                     <td className="px-4 py-3">
                       {fields.length === 0 ? (
                         <span className="text-zinc-300">—</span>
@@ -333,15 +347,22 @@ export default function ServicesPage() {
               <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-[1fr_280px]">
                 {/* Editor */}
                 <div className="px-6 py-4 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Service Name</label>
+                    <input className="nexora-input" required placeholder="e.g. Laptop Screen Replacement" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+                  </div>
+                  <div className={`grid grid-cols-1 gap-4 ${canViewCost ? "sm:grid-cols-2" : ""}`}>
                     <div>
-                      <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Service Name</label>
-                      <input className="nexora-input" required placeholder="e.g. Laptop Screen Replacement" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Default Price (Rs.)</label>
+                      <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Selling Price (Rs.)</label>
                       <input className="nexora-input" type="number" min="0" step="any" required value={form.defaultPrice} onChange={e => setForm({ ...form, defaultPrice: e.target.value })} />
                     </div>
+                    {canViewCost && (
+                      <div>
+                        <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Cost Price (Rs.)</label>
+                        <input className="nexora-input" type="number" min="0" step="any" placeholder="0" value={form.costPrice} onChange={e => setForm({ ...form, costPrice: e.target.value })} />
+                        <p className="text-[11px] text-zinc-400 mt-1">Internal only — never shown to customers or on bills.</p>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Description</label>
@@ -423,6 +444,14 @@ export default function ServicesPage() {
                       <p className="font-medium text-ink text-sm">{form.name || "Service name"}</p>
                       <p className="text-sm font-medium whitespace-nowrap">Rs. {Number(form.defaultPrice || 0).toLocaleString()}</p>
                     </div>
+                    {canViewCost && form.costPrice !== "" && (
+                      <p className="text-xs text-zinc-500">
+                        Cost Rs. {Number(form.costPrice || 0).toLocaleString()} · Profit{" "}
+                        <span className={Number(form.defaultPrice || 0) - Number(form.costPrice || 0) < 0 ? "text-red-500" : "text-green-600"}>
+                          Rs. {(Number(form.defaultPrice || 0) - Number(form.costPrice || 0)).toLocaleString()}
+                        </span>
+                      </p>
+                    )}
                     {previewFields.length === 0 && <p className="text-xs text-zinc-400">No custom fields.</p>}
                     {previewFields.map(f => {
                       const label = <>{f.label}{f.required && <span className="text-brand"> *</span>}</>;

@@ -56,6 +56,7 @@ export type PermissionKey =
   | "services.view"
   | "services.edit"
   | "services.delete"
+  | "services.viewCost"
   | "customers.view"
   | "warranty.view";
 
@@ -158,6 +159,10 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   { key: "services.view", label: "View Services", module: "Services", ruleEnforced: false },
   { key: "services.edit", label: "Create / edit service", module: "Services", ruleEnforced: true },
   { key: "services.delete", label: "Delete service", module: "Services", ruleEnforced: true },
+  // UI-only: hides/edits the service cost price on the Services page and in
+  // the POS service popup. Not a `.view` suffix, so it defaults false for
+  // every non-Admin role — Admin/Super Admin get it, others only if granted.
+  { key: "services.viewCost", label: "View / edit service cost price", module: "Services", ruleEnforced: false },
 
   { key: "customers.view", label: "View Customers", module: "Customers", ruleEnforced: false },
 

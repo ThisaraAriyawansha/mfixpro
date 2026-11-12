@@ -974,7 +974,9 @@ function saleStatsContribution(sale: StatsSale, items: StatsItem[], when: Date):
 
   const node: StatsNode = {
     revenue: total,
-    cogs: items.reduce((t, it) => t + (it.costPrice || 0) * (it.qty || 0), 0),
+    cogs:
+      items.reduce((t, it) => t + (it.costPrice || 0) * (it.qty || 0), 0) +
+      (sale.services || []).reduce((t, sv) => t + (sv.chargeType === "paid" ? sv.costPrice || 0 : 0), 0),
     orders: 1,
     itemsSold: items.reduce((t, it) => t + (it.qty || 0), 0),
     repairRevenue: sale.jobId ? total : 0,
