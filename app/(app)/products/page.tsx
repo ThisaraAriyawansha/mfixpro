@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Product, Brand, MainCategory, SubCategory } from "@/types";
 import { Plus, Search, Edit2, Trash2, Package, ChevronDown, X, Layers, Hash, Check } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
+import SearchableSelect from "@/components/ui/SearchableSelect";
 import Pagination from "@/components/ui/Pagination";
 import AccessRestricted from "@/components/ui/AccessRestricted";
 import { useDraftState } from "@/hooks/useDraftState";
@@ -552,10 +553,15 @@ export default function ProductsPage() {
               </div>
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Brand</label>
-                <select className="nexora-input" required value={form.brandId} onChange={e => setForm({...form, brandId: e.target.value})}>
-                  <option value="">Select brand</option>
-                  {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
+                <SearchableSelect
+                  required
+                  options={brands.map(b => ({ id: b.id, label: b.name }))}
+                  value={form.brandId}
+                  onChange={id => setForm({...form, brandId: id})}
+                  placeholder="Select brand"
+                  searchPlaceholder="Search brands…"
+                  emptyText="No matching brands"
+                />
               </div>
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">SKU</label>
@@ -567,17 +573,29 @@ export default function ProductsPage() {
               </div>
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Main Category</label>
-                <select className="nexora-input" required value={form.mainCategoryId} onChange={e => setForm({...form, mainCategoryId: e.target.value, subCategoryId: ""})}>
-                  <option value="">Select</option>
-                  {mainCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <SearchableSelect
+                  required
+                  options={mainCats.map(c => ({ id: c.id, label: c.name }))}
+                  value={form.mainCategoryId}
+                  onChange={id => setForm({...form, mainCategoryId: id, subCategoryId: id === form.mainCategoryId ? form.subCategoryId : ""})}
+                  placeholder="Select"
+                  searchPlaceholder="Search categories…"
+                  emptyText="No matching categories"
+                />
               </div>
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Sub Category <span className="normal-case tracking-normal text-zinc-400">(optional)</span></label>
-                <select className="nexora-input" value={form.subCategoryId} onChange={e => setForm({...form, subCategoryId: e.target.value})}>
-                  <option value="">Select</option>
-                  {filteredSubCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <SearchableSelect
+                  options={[
+                    ...(form.subCategoryId ? [{ id: "", label: "— None —" }] : []),
+                    ...filteredSubCats.map(c => ({ id: c.id, label: c.name })),
+                  ]}
+                  value={form.subCategoryId}
+                  onChange={id => setForm({...form, subCategoryId: id})}
+                  placeholder="Select"
+                  searchPlaceholder="Search subcategories…"
+                  emptyText={form.mainCategoryId ? "No matching subcategories" : "Select a main category first"}
+                />
               </div>
               </div>
               </section>

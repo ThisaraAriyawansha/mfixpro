@@ -6,7 +6,7 @@ import {
 } from "@/lib/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { MainCategory, SubCategory } from "@/types";
-import { Plus, Edit2, Trash2, X, ChevronRight } from "lucide-react";
+import { Plus, Edit2, Trash2, X, ChevronRight, Search } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import AccessRestricted from "@/components/ui/AccessRestricted";
 import { useDraftState } from "@/hooks/useDraftState";
@@ -51,7 +51,20 @@ export default function CategoriesPage() {
     if (selectedMain) setSelectedMain(m.find((c: any) => c.id === selectedMain.id) as MainCategory || null);
   }
 
-  const filteredSubs = subCats.filter(s => s.mainCategoryId === selectedMain?.id);
+  const [mainSearch, setMainSearch] = useState("");
+  const [subSearch, setSubSearch] = useState("");
+
+  const mainQ = mainSearch.trim().toLowerCase();
+  const filteredMains = mainQ
+    ? mainCats.filter(c =>
+        c.name.toLowerCase().includes(mainQ) ||
+        subCats.some(s => s.mainCategoryId === c.id && s.name.toLowerCase().includes(mainQ)))
+    : mainCats;
+
+  const subQ = subSearch.trim().toLowerCase();
+  const filteredSubs = subCats.filter(s =>
+    s.mainCategoryId === selectedMain?.id && (!subQ || s.name.toLowerCase().includes(subQ)));
+  const selectedHasSubs = subCats.some(s => s.mainCategoryId === selectedMain?.id);
 
   const handleMainSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,11 +126,25 @@ export default function CategoriesPage() {
               <Plus size={12} /> Add
             </button>
           </div>
+          <div className="px-4 py-3 border-b border-zinc-100">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+              <input
+                className="nexora-input pl-9"
+                placeholder="Search categories or subcategories..."
+                value={mainSearch}
+                onChange={e => setMainSearch(e.target.value)}
+              />
+            </div>
+          </div>
           <div className="divide-y divide-zinc-50">
             {mainCats.length === 0 && (
               <p className="text-center py-8 text-sm text-zinc-400">No categories</p>
             )}
-            {mainCats.map(cat => (
+            {mainCats.length > 0 && filteredMains.length === 0 && (
+              <p className="text-center py-8 text-sm text-zinc-400">No matching categories</p>
+            )}
+            {filteredMains.map(cat => (
               <div
                 key={cat.id}
                 onClick={() => setSelectedMain(cat)}
@@ -157,12 +184,28 @@ export default function CategoriesPage() {
               </button>
             )}
           </div>
+          {selectedMain && (
+            <div className="px-4 py-3 border-b border-zinc-100">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  className="nexora-input pl-9"
+                  placeholder="Search subcategories..."
+                  value={subSearch}
+                  onChange={e => setSubSearch(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
           <div className="divide-y divide-zinc-50">
             {!selectedMain && (
               <p className="text-center py-8 text-sm text-zinc-400">Select a main category</p>
             )}
-            {selectedMain && filteredSubs.length === 0 && (
+            {selectedMain && !selectedHasSubs && (
               <p className="text-center py-8 text-sm text-zinc-400">No subcategories yet</p>
+            )}
+            {selectedMain && selectedHasSubs && filteredSubs.length === 0 && (
+              <p className="text-center py-8 text-sm text-zinc-400">No matching subcategories</p>
             )}
             {filteredSubs.map(sub => (
               <div key={sub.id} className="flex items-center justify-between px-4 py-3 hover:bg-zinc-50 transition-colors">

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { getBrands, addBrand, updateBrand, deleteBrand } from "@/lib/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Brand } from "@/types";
-import { Plus, Edit2, Trash2, X } from "lucide-react";
+import { Plus, Edit2, Trash2, X, Search } from "lucide-react";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import AccessRestricted from "@/components/ui/AccessRestricted";
 import { useDraftState } from "@/hooks/useDraftState";
@@ -34,6 +34,12 @@ export default function BrandsPage() {
     const data = await getBrands();
     setBrands(data as Brand[]);
   }
+
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+  const filteredBrands = q
+    ? brands.filter(b => b.name.toLowerCase().includes(q) || (b.description || "").toLowerCase().includes(q))
+    : brands;
 
   const openAdd = () => { setEditing(null); setForm(addDraft); setShowModal(true); };
   const openEdit = (b: Brand) => { setEditing(b); setForm({ name: b.name, description: b.description || "" }); setShowModal(true); };
@@ -72,8 +78,18 @@ export default function BrandsPage() {
         </button>
       </div>
 
+      <div className="relative mb-4 sm:max-w-sm">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+        <input
+          className="nexora-input pl-9"
+          placeholder="Search brands..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-        {brands.map(brand => (
+        {filteredBrands.map(brand => (
           <div key={brand.id} className="nexora-card p-4 flex items-start justify-between">
             <div>
               <p className="font-medium text-ink text-sm">{brand.name}</p>
@@ -89,6 +105,9 @@ export default function BrandsPage() {
         ))}
         {brands.length === 0 && (
           <div className="col-span-full text-center py-12 text-zinc-400 text-sm">No brands yet. Add your first brand.</div>
+        )}
+        {brands.length > 0 && filteredBrands.length === 0 && (
+          <div className="col-span-full text-center py-12 text-zinc-400 text-sm">No matching brands.</div>
         )}
       </div>
 

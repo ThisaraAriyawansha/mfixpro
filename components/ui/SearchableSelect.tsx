@@ -14,6 +14,9 @@ interface SearchableSelectProps {
   onChange: (id: string) => void;
   placeholder?: string;
   emptyText?: string;
+  searchPlaceholder?: string;
+  /** Blocks native form submission while nothing is selected. */
+  required?: boolean;
 }
 
 export default function SearchableSelect({
@@ -22,6 +25,8 @@ export default function SearchableSelect({
   onChange,
   placeholder = "Select…",
   emptyText = "No matches",
+  searchPlaceholder = "Search by name or SKU…",
+  required = false,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -48,6 +53,18 @@ export default function SearchableSelect({
 
   return (
     <div className="relative" ref={containerRef}>
+      {required && (
+        // Invisible input so the browser's native "required" validation applies.
+        <input
+          tabIndex={-1}
+          aria-hidden="true"
+          required
+          value={value}
+          onChange={() => {}}
+          onFocus={() => setOpen(true)}
+          className="absolute inset-x-0 bottom-0 h-px w-full opacity-0 pointer-events-none"
+        />
+      )}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -66,7 +83,7 @@ export default function SearchableSelect({
             <input
               autoFocus
               className="nexora-input pl-8 text-sm py-1.5"
-              placeholder="Search by name or SKU…"
+              placeholder={searchPlaceholder}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
