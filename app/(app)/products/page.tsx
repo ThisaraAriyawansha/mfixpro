@@ -18,7 +18,7 @@ const PAGE_SIZE = 10;
 const DRAFT = "products";
 const EMPTY_FORM = {
   name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
-  sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "", lowStockAlert: "5",
+  sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "0", lowStockAlert: "5",
   description: "", warrantyMonths: "0", trackSerial: false,
 };
 const EMPTY_BATCH_FORM = { costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" };
@@ -134,7 +134,8 @@ export default function ProductsPage() {
 
   const openAdd = () => {
     setEditingProduct(null);
-    setForm(addDraft);
+    // Older saved drafts may hold a blank stock — default it to 0.
+    setForm({ ...addDraft, totalStock: addDraft.totalStock === "" ? "0" : addDraft.totalStock });
     setShowModal(true);
   };
 
@@ -658,7 +659,7 @@ export default function ProductsPage() {
               {!editingProduct && !form.trackSerial && (
                 <div>
                   <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Cost Price (Rs.)</label>
-                  <input type="number" className="nexora-input" required value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Per unit" />
+                  <input type="number" className="nexora-input" required={Number(form.totalStock) > 0} value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Per unit" />
                 </div>
               )}
               <div>
@@ -670,7 +671,7 @@ export default function ProductsPage() {
                       : "0 — add via batches"}
                   </div>
                 ) : (
-                  <input type="number" className="nexora-input" required value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
+                  <input type="number" min="0" className="nexora-input" value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
                 )}
               </div>
               <div>
