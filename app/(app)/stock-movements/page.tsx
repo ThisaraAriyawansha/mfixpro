@@ -24,6 +24,7 @@ const REFERENCE_TYPE_OPTIONS = [
   { value: "sale", label: "Sale" },
   { value: "sale_cancel", label: "Sale Cancel" },
   { value: "batch_edit", label: "Batch Edit" },
+  { value: "grn_edit", label: "GRN Edit" },
 ];
 
 function locationLabel(loc?: string) {

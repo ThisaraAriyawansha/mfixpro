@@ -166,11 +166,15 @@ service cloud.firestore {
         // from isAuth() so the Products-page "Edit Batch" quick-fix is no
         // longer usable by every logged-in staff member.
         allow read, create: if isAuth();
-        allow update, delete: if hasPerm('products.batch.edit');
+        // grn.edit too: GRN Admin Edit corrects the cost/qty of (or voids)
+        // the batch its own line created.
+        allow update: if hasPerm('products.batch.edit') || hasPerm('grn.edit');
+        allow delete: if hasPerm('products.batch.edit');
       }
       match /units/{unitId} {
         allow read, create, update: if isAuth();
-        allow delete: if hasPerm('products.unit.delete');
+        // grn.edit: removing a serialized GRN line deletes its never-used units.
+        allow delete: if hasPerm('products.unit.delete') || hasPerm('grn.edit');
       }
     }
 

@@ -789,12 +789,13 @@ export default function ProductsPage() {
                         <div className="flex items-center gap-3 ml-auto">
                           <div className="text-right">
                             <p className="text-sm font-medium">{b.remainingQty} / {b.totalQty} units</p>
-                            <span className={`badge ${b.status === "active" ? "badge-success" : "badge-default"}`}>{b.status}</span>
+                            <span className={`badge ${b.status === "active" ? "badge-success" : b.status === "voided" ? "badge-danger" : "badge-default"}`}>{b.status === "voided" ? "removed from GRN" : b.status}</span>
                           </div>
-                          {batchModalProduct?.trackSerial && (
+                          {/* A voided batch was removed from its GRN (stock + supplier already reversed) — editing it here would put stock back without the GRN. */}
+                          {batchModalProduct?.trackSerial && b.status !== "voided" && (
                             <button onClick={() => openManageSerials(b)} className="nexora-btn nexora-btn-ghost p-1.5" title="Manage serial numbers"><Hash size={12} /></button>
                           )}
-                          {canEditBatch && (
+                          {canEditBatch && b.status !== "voided" && (
                             <button onClick={() => openEditBatch(b)} className="nexora-btn nexora-btn-ghost p-1.5" title="Edit price"><Edit2 size={12} /></button>
                           )}
                         </div>

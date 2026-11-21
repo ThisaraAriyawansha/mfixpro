@@ -4,13 +4,25 @@ import Link from "next/link";
 import { getGrns, getGrn, adminUpdateGrn, getSuppliers, dateInputRange } from "@/lib/firestore";
 import { daysAgoInput, todayInput, DEFAULT_LIST_DAYS } from "@/lib/dates";
 import { useAuth } from "@/hooks/useAuth";
-import { Search, Plus, Eye, X, PackagePlus, Download, Pencil } from "lucide-react";
+import { Search, Plus, Eye, X, PackagePlus, Download, Pencil, Trash2, Undo2 } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
 import { rowsToCSV, downloadCSV } from "@/lib/csv";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import AccessRestricted from "@/components/ui/AccessRestricted";
 
 const PAGE_SIZE = 10;
+
+type EditItem = {
+  id: string;
+  productName: string;
+  serialized: boolean;
+  origQty: number;
+  origCost: number;
+  qty: string;
+  costPrice: string;
+  sellingPrice: string;
+  remove: boolean;
+};
 
 export default function GrnPage() {
   const { user, userDisplayName, can } = useAuth();
@@ -31,8 +43,9 @@ export default function GrnPage() {
   const [editingGrn, setEditingGrn] = useState(false);
   const [editSupplierId, setEditSupplierId] = useState("");
   const [editNote, setEditNote] = useState("");
-  const [editItems, setEditItems] = useState<{ id: string; costPrice: string; sellingPrice: string }[]>([]);
+  const [editItems, setEditItems] = useState<EditItem[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState("");
 
   const loadGrns = () => getGrns(dateInputRange(fromDate, toDate)).then((g) => { setGrns(g); setLoading(false); });
 
@@ -60,12 +73,79 @@ export default function GrnPage() {
     if (!viewGrn) return;
     setEditSupplierId(viewGrn.supplierId || "");
     setEditNote(viewGrn.note || "");
-    setEditItems((viewGrn.items || []).map((i: any) => ({ id: i.id, costPrice: String(i.costPrice), sellingPrice: i.sellingPrice != null ? String(i.sellingPrice) : "" })));
+    setEditItems(
+      (viewGrn.items || [])
+        .filter((i: any) => !i.removed)
+        .map((i: any) => ({
+          id: i.id,
+          productName: i.productName,
+          serialized: i.serials?.length > 0,
+          origQty: i.qty,
+          origCost: Number(i.costPrice) || 0,
+          qty: String(i.qty),
+          costPrice: String(i.costPrice),
+          sellingPrice: i.sellingPrice != null ? String(i.sellingPrice) : "",
+          remove: false,
+        }))
+    );
+    setEditError("");
     setEditingGrn(true);
   };
 
+  const updateEditItem = (id: string, patch: Partial<EditItem>) =>
+    setEditItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+
   const handleSaveGrnEdit = async () => {
     if (!viewGrn) return;
+    setEditError("");
+
+    for (const i of editItems) {
+      if (i.remove) continue;
+      const qty = Number(i.qty);
+      if (!i.serialized && (!Number.isInteger(qty) || qty < 1)) {
+        setEditError(`Enter a valid quantity for "${i.productName}" (use Remove to delete it).`);
+        return;
+      }
+      if (!(Number(i.costPrice) > 0)) {
+        setEditError(`Cost price for "${i.productName}" must be greater than zero.`);
+        return;
+      }
+    }
+
+    const removed = editItems.filter((i) => i.remove);
+    const qtyChanged = editItems.filter((i) => !i.remove && !i.serialized && Number(i.qty) !== i.origQty);
+    const costChanged = editItems.filter((i) => !i.remove && Number(i.costPrice) !== i.origCost);
+    // Mirrors adminUpdateGrn: Σ(new qty × new cost − old qty × old cost).
+    const costDelta = editItems.reduce((sum, i) => {
+      const newQty = i.remove ? 0 : i.serialized ? i.origQty : Number(i.qty);
+      const newCost = i.remove ? i.origCost : Number(i.costPrice);
+      return sum + newQty * newCost - i.origQty * i.origCost;
+    }, 0);
+    const totalBefore = viewGrn.totalCost ?? 0;
+    const totalAfter = totalBefore + costDelta;
+    const supplierChanged = (editSupplierId || null) !== (viewGrn.supplierId || null);
+    const newSupplierName = suppliers.find((s) => s.id === editSupplierId)?.name || "No supplier";
+    const rs = (n: number) => `Rs. ${n.toLocaleString()}`;
+
+    if (removed.length > 0 || qtyChanged.length > 0 || costChanged.length > 0 || supplierChanged) {
+      const lines = [
+        ...removed.map((i) => `• Remove ${i.productName} (qty ${i.origQty})`),
+        ...qtyChanged.map((i) => `• ${i.productName}: qty ${i.origQty} → ${i.qty}`),
+        ...costChanged.map((i) => `• ${i.productName}: cost ${rs(i.origCost)} → ${rs(Number(i.costPrice))}`),
+      ];
+      const money = [`GRN total: ${rs(totalBefore)} → ${rs(totalAfter)}`];
+      if (supplierChanged) {
+        if (viewGrn.supplierId) money.push(`${viewGrn.supplierName || "Old supplier"}: payable − ${rs(totalBefore)}`);
+        if (editSupplierId) money.push(`${newSupplierName}: payable + ${rs(totalAfter)}`);
+      } else if (viewGrn.supplierId && costDelta !== 0) {
+        money.push(`${viewGrn.supplierName || "Supplier"}: payable ${costDelta > 0 ? "+" : "−"} ${rs(Math.abs(costDelta))}`);
+      }
+      const header = removed.length === editItems.length
+        ? "This removes ALL items from this GRN."
+        : "Stock and supplier balance will be adjusted automatically:";
+      if (!confirm(`${header}\n\n${lines.join("\n")}${lines.length ? "\n\n" : ""}${money.join("\n")}\n\nContinue?`)) return;
+    }
+
     setSavingEdit(true);
     try {
       const supplier = suppliers.find((s) => s.id === editSupplierId);
@@ -73,19 +153,27 @@ export default function GrnPage() {
         viewGrn.id,
         {
           supplierId: editSupplierId || null,
-          supplierName: supplier?.name || "",
+          // Keep the stored name if the supplier is unchanged but missing from the list.
+          supplierName: supplier?.name || (editSupplierId && editSupplierId === viewGrn.supplierId ? viewGrn.supplierName || "" : ""),
           note: editNote,
-          items: editItems.map((i) => ({
-            id: i.id,
-            costPrice: Number(i.costPrice),
-            sellingPrice: i.sellingPrice ? Number(i.sellingPrice) : null,
-          })),
+          items: editItems.map((i) =>
+            i.remove
+              ? { id: i.id, remove: true }
+              : {
+                  id: i.id,
+                  costPrice: Number(i.costPrice),
+                  sellingPrice: i.sellingPrice ? Number(i.sellingPrice) : null,
+                  ...(i.serialized ? {} : { qty: Number(i.qty) }),
+                }
+          ),
         },
         { uid: user!.uid, name: userDisplayName || user?.email || "Admin" }
       );
       setViewGrn(await getGrn(viewGrn.id));
       await loadGrns();
       setEditingGrn(false);
+    } catch (e: any) {
+      setEditError(e?.message || "Failed to save changes.");
     } finally {
       setSavingEdit(false);
     }
@@ -248,29 +336,69 @@ export default function GrnPage() {
                     <textarea className="nexora-input" rows={2} value={editNote} onChange={(e) => setEditNote(e.target.value)} />
                   </div>
                   <div>
-                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Items (quantity locked)</p>
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Items</p>
+                    <div className="hidden sm:grid grid-cols-[1fr_80px_1fr_1fr_36px] gap-2 mb-1 text-[11px] text-zinc-400 uppercase tracking-wider">
+                      <span>Item</span><span>Qty</span><span>Cost</span><span>Sells</span><span></span>
+                    </div>
                     <div className="space-y-2">
-                      {(viewGrn.items || []).map((item: any, i: number) => (
-                        <div key={item.id} className="grid grid-cols-3 gap-2 items-center">
-                          <span className="text-sm text-ink truncate">{item.productName} <span className="text-xs text-zinc-400">· Qty {item.qty}</span></span>
-                          <input
-                            type="number"
-                            className="nexora-input text-sm"
-                            value={editItems[i]?.costPrice ?? ""}
-                            placeholder="Cost"
-                            onChange={(e) => setEditItems((prev) => prev.map((p, idx) => idx === i ? { ...p, costPrice: e.target.value } : p))}
-                          />
-                          <input
-                            type="number"
-                            className="nexora-input text-sm"
-                            value={editItems[i]?.sellingPrice ?? ""}
-                            placeholder="Sells"
-                            onChange={(e) => setEditItems((prev) => prev.map((p, idx) => idx === i ? { ...p, sellingPrice: e.target.value } : p))}
-                          />
+                      {editItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className={`grid grid-cols-2 sm:grid-cols-[1fr_80px_1fr_1fr_36px] gap-2 items-center ${item.remove ? "opacity-50" : ""}`}
+                        >
+                          <span className={`text-sm text-ink truncate col-span-2 sm:col-span-1 ${item.remove ? "line-through" : ""}`} title={item.productName}>
+                            {item.productName}
+                            {item.serialized && <span className="block text-[11px] text-zinc-400">Serialized: remove only</span>}
+                          </span>
+                          {item.remove ? (
+                            <span className="col-span-2 sm:col-span-3 text-xs text-red-600">Will be removed (qty {item.origQty})</span>
+                          ) : (
+                            <>
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                aria-label="Quantity"
+                                className="nexora-input text-sm disabled:bg-zinc-50 disabled:text-zinc-400"
+                                value={item.qty}
+                                disabled={item.serialized}
+                                placeholder="Qty"
+                                onChange={(e) => updateEditItem(item.id, { qty: e.target.value })}
+                              />
+                              <input
+                                type="number"
+                                aria-label="Cost price"
+                                className="nexora-input text-sm"
+                                value={item.costPrice}
+                                placeholder="Cost"
+                                onChange={(e) => updateEditItem(item.id, { costPrice: e.target.value })}
+                              />
+                              <input
+                                type="number"
+                                aria-label="Selling price"
+                                className="nexora-input text-sm"
+                                value={item.sellingPrice}
+                                placeholder="Sells"
+                                onChange={(e) => updateEditItem(item.id, { sellingPrice: e.target.value })}
+                              />
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => updateEditItem(item.id, { remove: !item.remove })}
+                            title={item.remove ? "Undo remove" : "Remove item from GRN"}
+                            className={`nexora-btn nexora-btn-ghost p-1.5 justify-self-end ${item.remove ? "text-zinc-600" : "text-red-600"}`}
+                          >
+                            {item.remove ? <Undo2 size={14} /> : <Trash2 size={14} />}
+                          </button>
                         </div>
                       ))}
                     </div>
+                    <p className="text-[11px] text-zinc-400 mt-2">
+                      Changing qty, cost or supplier, or removing an item, automatically adjusts stock, the GRN total and the supplier balance. Stock already sold or transferred can't be removed.
+                    </p>
                   </div>
+                  {editError && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>}
                   <div className="flex gap-2">
                     <button onClick={handleSaveGrnEdit} disabled={savingEdit} className="nexora-btn nexora-btn-primary text-xs py-1.5 disabled:opacity-60">
                       {savingEdit ? "Saving…" : "Save"}
@@ -316,9 +444,12 @@ export default function GrnPage() {
                   </thead>
                   <tbody className="divide-y divide-zinc-50">
                     {viewGrn.items?.map((item: any) => (
-                      <tr key={item.id}>
+                      <tr key={item.id} className={item.removed ? "opacity-50 line-through" : ""}>
                         <td className="py-2.5">
-                          <p className="font-medium text-ink">{item.productName}</p>
+                          <p className="font-medium text-ink">
+                            {item.productName}
+                            {item.removed && <span className="ml-2 badge badge-danger no-underline inline-block">Removed</span>}
+                          </p>
                           <p className="text-xs text-zinc-400">{item.sku}</p>
                           {item.serials?.length > 0 && (
                             <p className="text-xs text-zinc-400 font-mono mt-0.5">{item.serials.join(", ")}</p>
