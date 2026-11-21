@@ -20,6 +20,9 @@ const EMPTY_FORM = {
   name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
   sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "0", lowStockAlert: "5",
   description: "", warrantyMonths: "0", trackSerial: false,
+  // Where the initial stock lands (add only). With "both", totalStock is the
+  // Stores qty and showroomQty the Showroom qty.
+  stockLocation: "stores" as "stores" | "showroom" | "both", showroomQty: "0",
 };
 const EMPTY_BATCH_FORM = { costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" };
 
@@ -113,6 +116,16 @@ export default function ProductsPage() {
 
   const filteredSubCats = subCats.filter(s => s.mainCategoryId === form.mainCategoryId);
 
+  // Initial stock split by location for a new (non-serial) product.
+  const stockLocation = form.stockLocation ?? "stores";
+  const initialQtys = {
+    storesQty: stockLocation === "showroom" ? 0 : Math.max(0, Number(form.totalStock) || 0),
+    showroomQty:
+      stockLocation === "stores" ? 0
+      : Math.max(0, Number(stockLocation === "showroom" ? form.totalStock : form.showroomQty) || 0),
+  };
+  const initialTotal = initialQtys.storesQty + initialQtys.showroomQty;
+
   useEffect(() => {
     loadData();
   }, []);
@@ -135,7 +148,7 @@ export default function ProductsPage() {
   const openAdd = () => {
     setEditingProduct(null);
     // Older saved drafts may hold a blank stock — default it to 0.
-    setForm({ ...addDraft, totalStock: addDraft.totalStock === "" ? "0" : addDraft.totalStock });
+    setForm({ ...EMPTY_FORM, ...addDraft, totalStock: addDraft.totalStock === "" ? "0" : addDraft.totalStock });
     setShowModal(true);
   };
 
@@ -147,6 +160,7 @@ export default function ProductsPage() {
       sellingPrice: String(p.sellingPrice), costPrice: "", totalStock: String(p.totalStock),
       lowStockAlert: String(p.lowStockAlert), description: p.description || "",
       warrantyMonths: String(p.warrantyMonths || 0), trackSerial: !!p.trackSerial,
+      stockLocation: "stores", showroomQty: "0",
     });
     setShowModal(true);
   };
@@ -325,12 +339,11 @@ export default function ProductsPage() {
         // pre-filling it here would double-count the initial quantity.
         const productRef = await addProduct({ ...data, totalStock: 0 } as any);
         // (addProduct seeds storesStock/showroomStock at 0 too.)
-        if (!form.trackSerial && Number(form.totalStock) > 0) {
-          await addBatch(productRef.id, {
-            costPrice: Number(form.costPrice),
-            sellingPrice: Number(form.sellingPrice),
-            qty: Number(form.totalStock),
-          });
+        if (!form.trackSerial) {
+          const { storesQty, showroomQty } = initialQtys;
+          const base = { costPrice: Number(form.costPrice), sellingPrice: Number(form.sellingPrice) };
+          if (storesQty > 0) await addBatch(productRef.id, { ...base, qty: storesQty, location: "stores" });
+          if (showroomQty > 0) await addBatch(productRef.id, { ...base, qty: showroomQty, location: "showroom" });
         }
         setAddDraft(EMPTY_FORM);
       }
@@ -659,21 +672,19 @@ export default function ProductsPage() {
               {!editingProduct && !form.trackSerial && (
                 <div>
                   <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Cost Price (Rs.)</label>
-                  <input type="number" className="nexora-input" required={Number(form.totalStock) > 0} value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Per unit" />
+                  <input type="number" className="nexora-input" required={initialTotal > 0} value={form.costPrice} onChange={e => setForm({...form, costPrice: e.target.value})} placeholder="Per unit" />
                 </div>
               )}
-              <div>
-                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
-                {form.trackSerial || editingProduct ? (
+              {(form.trackSerial || editingProduct) && (
+                <div>
+                  <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
                   <div className="nexora-input flex items-center text-zinc-400 text-sm">
                     {editingProduct
                       ? `${editingProduct.totalStock} units — change via batches / Stock Out`
                       : "0 — add via batches"}
                   </div>
-                ) : (
-                  <input type="number" min="0" className="nexora-input" value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
-                )}
-              </div>
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Low Stock Alert</label>
                 <input type="number" className="nexora-input" value={form.lowStockAlert} onChange={e => setForm({...form, lowStockAlert: e.target.value})} />
@@ -683,6 +694,47 @@ export default function ProductsPage() {
                 <input type="number" className="nexora-input" value={form.warrantyMonths} onChange={e => setForm({...form, warrantyMonths: e.target.value})} />
               </div>
               </div>
+              {!editingProduct && !form.trackSerial && (
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-x-3 gap-y-4">
+                  <div>
+                    <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Stock Location</label>
+                    <div className="grid grid-cols-3 rounded-lg border border-zinc-200 p-0.5 bg-zinc-50">
+                      {([
+                        ["stores", "Stores"],
+                        ["showroom", "Showroom"],
+                        ["both", "Both"],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setForm({ ...form, stockLocation: value })}
+                          className={`py-2 text-sm rounded-md transition-colors ${stockLocation === value ? "bg-[#e30613] text-white font-medium shadow-sm" : "text-zinc-500 hover:text-ink"}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">
+                      {stockLocation === "showroom" ? "Showroom Qty" : "Stores Qty"}
+                    </label>
+                    <input type="number" min="0" className="nexora-input" value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
+                  </div>
+                  {stockLocation === "both" && (
+                    <div>
+                      <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Showroom Qty</label>
+                      <input type="number" min="0" className="nexora-input" value={form.showroomQty} onChange={e => setForm({...form, showroomQty: e.target.value})} />
+                    </div>
+                  )}
+                  {initialTotal > 0 && (
+                    <p className="sm:col-span-3 text-xs text-zinc-400 -mt-2">
+                      Initial stock: {initialTotal} units
+                      {" "}(Stores: {initialQtys.storesQty} · Showroom: {initialQtys.showroomQty})
+                    </p>
+                  )}
+                </div>
+              )}
               <label className="mt-4 flex items-start gap-2.5 p-3 rounded-lg border border-zinc-200 bg-zinc-50/60 cursor-pointer">
                 <input
                   type="checkbox"
