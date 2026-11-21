@@ -23,6 +23,42 @@ const EMPTY_FORM = {
 };
 const EMPTY_BATCH_FORM = { costPrice: "", sellingPrice: "", qty: "", note: "", serials: "" };
 
+const SORT_OPTIONS = [
+  { value: "name-asc", label: "Name: A → Z" },
+  { value: "name-desc", label: "Name: Z → A" },
+  { value: "date-desc", label: "Newest added" },
+  { value: "date-asc", label: "Oldest added" },
+  { value: "price-asc", label: "Price: Low → High" },
+  { value: "price-desc", label: "Price: High → Low" },
+  { value: "stock-asc", label: "Stock: Low → High" },
+  { value: "stock-desc", label: "Stock: High → Low" },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["value"];
+
+// createdAt may be a Firestore Timestamp, a Date, a string or missing.
+function createdAtMillis(v: any): number {
+  if (!v) return 0;
+  if (typeof v.toMillis === "function") return v.toMillis();
+  if (typeof v.seconds === "number") return v.seconds * 1000;
+  const t = new Date(v).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+function compareProducts(a: Product, b: Product, sortBy: SortKey): number {
+  const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+  switch (sortBy) {
+    case "name-asc": return byName;
+    case "name-desc": return -byName;
+    case "date-desc": return createdAtMillis(b.createdAt) - createdAtMillis(a.createdAt) || byName;
+    case "date-asc": return createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt) || byName;
+    case "price-asc": return (a.sellingPrice ?? 0) - (b.sellingPrice ?? 0) || byName;
+    case "price-desc": return (b.sellingPrice ?? 0) - (a.sellingPrice ?? 0) || byName;
+    case "stock-asc": return (a.totalStock ?? 0) - (b.totalStock ?? 0) || byName;
+    case "stock-desc": return (b.totalStock ?? 0) - (a.totalStock ?? 0) || byName;
+    default: return byName;
+  }
+}
+
 export default function ProductsPage() {
   const { user, userDisplayName, can } = useAuth();
   const canView = can("products.view");
@@ -39,6 +75,7 @@ export default function ProductsPage() {
   const [search, setSearch] = useDraftState(DRAFT, "search", "");
   const [filterMainCat, setFilterMainCat] = useDraftState(DRAFT, "filterMainCat", "");
   const [filterSubCat, setFilterSubCat] = useDraftState(DRAFT, "filterSubCat", "");
+  const [sortBy, setSortBy] = useDraftState<SortKey>(DRAFT, "sortBy", "name-asc");
   const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useDraftState(DRAFT, "showModal", false);
   const [showBatchModal, setShowBatchModal] = useDraftState<string | null>(DRAFT, "showBatchModal", null);
@@ -82,7 +119,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterMainCat, filterSubCat]);
+  }, [search, filterMainCat, filterSubCat, sortBy]);
 
   async function loadData() {
     const [p, b, mc, sc] = await Promise.all([
@@ -379,7 +416,7 @@ export default function ProductsPage() {
     if (filterMainCat && p.mainCategoryId !== filterMainCat) return false;
     if (filterSubCat && p.subCategoryId !== filterSubCat) return false;
     return true;
-  });
+  }).sort((a, b) => compareProducts(a, b, sortBy));
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -429,6 +466,14 @@ export default function ProductsPage() {
         >
           <option value="">All subcategories</option>
           {filterSubCatOptions.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select
+          className="nexora-input w-auto"
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as SortKey)}
+          title="Sort products"
+        >
+          {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}
         </select>
         {(filterMainCat || filterSubCat) && (
           <button
