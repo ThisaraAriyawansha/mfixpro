@@ -5,6 +5,7 @@ import {
   getShopSettings, updateShopSettings,
   createTeamUser, getTeamUsers, updateTeamUser, getUsageStats, CollectionStat, cleanCollection,
   getCollectionData, migrateStockToLocations, getStockLocationMigrationStatus, backfillUserPermissions,
+  recalculateProductStock,
 } from "@/lib/firestore";
 import { Plus, X, Store, Users, CheckCircle, AlertCircle, Pencil, ToggleLeft, ToggleRight, Database, HardDrive, BookOpen, PenLine, Trash2, AlertTriangle, Download, Loader2, BellRing, Boxes, ShieldCheck } from "lucide-react";
 import { UserProfile } from "@/types";
@@ -126,6 +127,24 @@ export default function SettingsPage() {
   const [migrating, setMigrating] = useState(false);
   const [migrationResult, setMigrationResult] = useState<{ productsTouched: number; batchesTouched: number; unitsTouched: number } | null>(null);
   const [migrationError, setMigrationError] = useState("");
+
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcResult, setRecalcResult] = useState<{ checked: number; fixed: { name: string; before: string; after: string }[] } | null>(null);
+  const [recalcError, setRecalcError] = useState("");
+
+  const handleRecalculateStock = async () => {
+    if (!canClean || recalculating) return;
+    setRecalculating(true);
+    setRecalcError("");
+    setRecalcResult(null);
+    try {
+      setRecalcResult(await recalculateProductStock());
+    } catch (err: any) {
+      setRecalcError(err.message || "Recalculation failed.");
+    } finally {
+      setRecalculating(false);
+    }
+  };
 
   const handleExportCSV = async (c: CollectionStat) => {
     if (!canClean) return;
@@ -669,6 +688,44 @@ export default function SettingsPage() {
             </>
           );
         })()}
+      </div>
+      )}
+
+      {/* Recalculate Stock — Admin + Super Admin. Rebuilds product stock counts from batches. */}
+      {canClean && (
+      <div className="nexora-card p-4 sm:p-6 mb-6">
+        <div className="flex items-center gap-3 mb-3">
+          <Boxes size={16} className="text-zinc-400" />
+          <div>
+            <h2 className="font-prata text-base text-ink">Recalculate Stock</h2>
+            <p className="text-xs text-zinc-400 mt-0.5">Fixes products whose total doesn&apos;t match Stores + Showroom</p>
+          </div>
+        </div>
+        <p className="text-xs text-zinc-500 mb-3">
+          Rebuilds each product&apos;s Total, Stores and Showroom stock from its batches&apos; remaining quantities.
+          Only mismatched products are changed. Products with no batches are skipped.
+        </p>
+        <button
+          onClick={handleRecalculateStock}
+          disabled={recalculating}
+          className="nexora-btn nexora-btn-primary text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {recalculating ? <Loader2 size={12} className="animate-spin" /> : <Boxes size={12} />}
+          {recalculating ? "Recalculating…" : "Recalculate Stock"}
+        </button>
+        {recalcError && <p className="text-xs text-red-500 mt-2">{recalcError}</p>}
+        {recalcResult && (
+          <div className="text-xs text-zinc-500 mt-3">
+            <p>Checked {recalcResult.checked} products — {recalcResult.fixed.length} fixed.</p>
+            {recalcResult.fixed.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {recalcResult.fixed.map((f, i) => (
+                  <li key={i}><span className="font-medium text-ink">{f.name}</span>: {f.before} → {f.after}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
       )}
 

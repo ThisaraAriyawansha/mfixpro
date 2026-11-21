@@ -3156,6 +3156,47 @@ export async function cleanCollection(collectionName: string): Promise<number> {
   return totalDeleted;
 }
 
+// ─── STOCK RECALCULATION ──────────────────────────────────────────────────────
+// Rebuilds totalStock / storesStock / showroomStock from each product's batches
+// (sum of remainingQty by location). Repairs products whose aggregates drifted,
+// e.g. from the old edit form overwriting totalStock. Products with no batches
+// are left alone so legacy stock is never wiped. Safe to run any time.
+
+export async function recalculateProductStock(): Promise<{
+  checked: number;
+  fixed: { name: string; before: string; after: string }[];
+}> {
+  const productsSnap = await getDocs(collection(db, "products"));
+  const fixed: { name: string; before: string; after: string }[] = [];
+
+  for (const productDoc of productsSnap.docs) {
+    const p = productDoc.data() as { name?: string; totalStock?: number; storesStock?: number; showroomStock?: number };
+    const batchesSnap = await getDocs(collection(db, "products", productDoc.id, "batches"));
+    if (batchesSnap.empty) continue;
+
+    let stores = 0;
+    let showroom = 0;
+    for (const b of batchesSnap.docs) {
+      const d = b.data() as { remainingQty?: number; location?: StockLocation };
+      const qty = Math.max(0, d.remainingQty ?? 0);
+      if ((d.location ?? "stores") === "showroom") showroom += qty;
+      else stores += qty;
+    }
+    const total = stores + showroom;
+
+    if (p.totalStock !== total || p.storesStock !== stores || p.showroomStock !== showroom) {
+      await updateDoc(productDoc.ref, { totalStock: total, storesStock: stores, showroomStock: showroom });
+      fixed.push({
+        name: p.name ?? productDoc.id,
+        before: `${p.totalStock ?? 0} (S ${p.storesStock ?? 0} / SR ${p.showroomStock ?? 0})`,
+        after: `${total} (S ${stores} / SR ${showroom})`,
+      });
+    }
+  }
+
+  return { checked: productsSnap.size, fixed };
+}
+
 // ─── STOCK LOCATION MIGRATION (one-time) ──────────────────────────────────────
 // Introducing the Stores/Showroom split requires every pre-existing batch and
 // unit to be tagged with a location, and every product to gain storesStock/

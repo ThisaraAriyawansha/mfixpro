@@ -264,6 +264,9 @@ export default function ProductsPage() {
     if (saving) return;
     setSaving(true);
     try {
+      // Stock is never written from this form: totalStock/storesStock/showroomStock
+      // are only changed through batches, transfers, stock-out and sales, so they
+      // stay in sync with each other.
       const data = {
         name: form.name,
         brandId: form.brandId,
@@ -272,7 +275,6 @@ export default function ProductsPage() {
         sku: form.sku,
         barcode: form.barcode.trim(),
         sellingPrice: Number(form.sellingPrice),
-        totalStock: form.trackSerial ? (editingProduct?.totalStock ?? 0) : Number(form.totalStock),
         lowStockAlert: Number(form.lowStockAlert),
         description: form.description,
         warrantyMonths: Number(form.warrantyMonths),
@@ -284,6 +286,7 @@ export default function ProductsPage() {
         // Seed stock at 0 — addBatch below increments it from there, so
         // pre-filling it here would double-count the initial quantity.
         const productRef = await addProduct({ ...data, totalStock: 0 } as any);
+        // (addProduct seeds storesStock/showroomStock at 0 too.)
         if (!form.trackSerial && Number(form.totalStock) > 0) {
           await addBatch(productRef.id, {
             costPrice: Number(form.costPrice),
@@ -615,9 +618,11 @@ export default function ProductsPage() {
               )}
               <div>
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
-                {form.trackSerial ? (
+                {form.trackSerial || editingProduct ? (
                   <div className="nexora-input flex items-center text-zinc-400 text-sm">
-                    {editingProduct ? `${editingProduct.totalStock} units` : "0 — add via batches"}
+                    {editingProduct
+                      ? `${editingProduct.totalStock} units — change via batches / Stock Out`
+                      : "0 — add via batches"}
                   </div>
                 ) : (
                   <input type="number" className="nexora-input" required value={form.totalStock} onChange={e => setForm({...form, totalStock: e.target.value})} />
