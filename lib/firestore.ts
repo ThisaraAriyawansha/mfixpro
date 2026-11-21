@@ -1889,13 +1889,15 @@ export async function getGrn(id: string) {
 // line's quantity or removing a wrongly-entered line. Everything createGrn
 // posted is kept in sync automatically, in one transaction:
 //
-//  • Stock — a qty change / removal adjusts the line's own batch and the
-//    product's stock aggregates at the GRN's location, and logs a
-//    "grn_edit" stock movement. Only stock this line still holds can be
-//    taken back: a line can't go below what was already sold / transferred /
-//    stocked out of its batch, and a serialized line can only be removed
-//    while every unit is still in stock at the GRN's location (its qty is
-//    defined by its serials, so it isn't editable).
+//  • Stock — a GRN line's stock lives in its own batch plus, once Transferred
+//    to Showroom, the Showroom batches created from it (sourceBatchId). A qty
+//    reduction / removal takes stock back from those batches (GRN batch
+//    first), adjusts the product's per-location stock and logs "grn_edit"
+//    stock movements. Only stock that still physically exists can be taken
+//    back: a line can't go below what was already sold / stocked out, and a
+//    serialized line can only be removed while every unit is still in stock
+//    (Stores or Showroom). A serialized line's qty is defined by its serials,
+//    so it can be removed but not re-quantified.
 //  • Money — GRN totalCost changes by Σ(new qty × new cost − old qty × old
 //    cost) over the edited lines, so qty, cost price and removals all flow
 //    through. The supplier's totalPayable / balance / paymentStatus moves by
@@ -1931,18 +1933,26 @@ export async function adminUpdateGrn(
     }
   }
 
-  // Non-transactional discovery (transactions can't run queries): the unit
-  // docs of serialized lines that are being removed, re-read inside the tx.
-  const unitIdsByItem = await Promise.all(
+  // Non-transactional discovery (transactions can't run queries), re-read
+  // inside the tx: for a qty change / removal, the Showroom batches that were
+  // Transferred out of the line's batch; for a serialized removal, its units.
+  const discovered = await Promise.all(
     (patch.items ?? []).map(async (p) => {
-      if (!p.remove) return [] as string[];
-      const itemDoc = await getDoc(doc(db, "grns", grnId, "grnItems", p.id));
-      const item = itemDoc.data() as any;
-      if (!item?.batchId || !(item.serials?.length > 0)) return [] as string[];
-      const units = await getDocs(
-        query(collection(db, "products", item.productId, "units"), where("batchId", "==", item.batchId))
+      const empty = { childBatchIds: [] as string[], unitIds: [] as string[] };
+      if (!p.remove && p.qty == null) return empty;
+      const item = (await getDoc(doc(db, "grns", grnId, "grnItems", p.id))).data() as any;
+      if (!item?.batchId) return empty;
+      if (item.serials?.length > 0) {
+        if (!p.remove) return empty;
+        const units = await getDocs(
+          query(collection(db, "products", item.productId, "units"), where("batchId", "==", item.batchId))
+        );
+        return { ...empty, unitIds: units.docs.map((d) => d.id) };
+      }
+      const children = await getDocs(
+        query(collection(db, "products", item.productId, "batches"), where("sourceBatchId", "==", item.batchId))
       );
-      return units.docs.map((d) => d.id);
+      return { ...empty, childBatchIds: children.docs.map((d) => d.id) };
     })
   );
 
@@ -1952,23 +1962,33 @@ export async function adminUpdateGrn(
     const grnSnap = await tx.get(grnRef);
     if (!grnSnap.exists()) throw new Error("GRN not found");
     const before = grnSnap.data() as any;
-    const location: StockLocation = before.location ?? "stores";
+    const grnLocation: StockLocation = before.location ?? "stores";
 
     const itemRefs = (patch.items ?? []).map((i) => doc(db, "grns", grnId, "grnItems", i.id));
     const itemSnaps = await Promise.all(itemRefs.map((r) => tx.get(r)));
+    const itemData = itemSnaps.map((s) => (s.exists() ? (s.data() as any) : null));
+    const qtyTouched = (i: number) => {
+      const p = patch.items![i];
+      const d = itemData[i];
+      return !!d && !d.removed && (!!p.remove || (p.qty != null && p.qty !== d.qty));
+    };
+
+    // [GRN line batch, ...Showroom batches transferred from it]
     const batchSnaps = await Promise.all(
-      itemSnaps.map((s, i) => {
-        const d = s.exists() ? (s.data() as any) : null;
-        const p = patch.items![i];
-        const qtyTouched = p.remove || (p.qty != null && d && p.qty !== d.qty);
-        return qtyTouched && d?.batchId ? tx.get(doc(db, "products", d.productId, "batches", d.batchId)) : Promise.resolve(null);
-      })
+      itemData.map((d, i) =>
+        qtyTouched(i) && d.batchId
+          ? Promise.all(
+              [d.batchId, ...discovered[i].childBatchIds].map((id) => tx.get(doc(db, "products", d.productId, "batches", id)))
+            )
+          : Promise.resolve([] as any[])
+      )
     );
     const unitSnaps = await Promise.all(
-      itemSnaps.map((s, i) => {
-        const d = s.exists() ? (s.data() as any) : null;
-        return Promise.all(unitIdsByItem[i].map((uid) => tx.get(doc(db, "products", d.productId, "units", uid))));
-      })
+      itemData.map((d, i) =>
+        qtyTouched(i)
+          ? Promise.all(discovered[i].unitIds.map((uid) => tx.get(doc(db, "products", d.productId, "units", uid))))
+          : Promise.resolve([] as any[])
+      )
     );
 
     const oldSupplierId: string | null = before.supplierId ?? null;
@@ -1982,53 +2002,106 @@ export async function adminUpdateGrn(
       : null;
     if (supplierChanged && newSupplierRef && !newSupplierSnap!.exists()) throw new Error("Selected supplier no longer exists");
 
-    // ---- Validate every qty change / removal before issuing any writes ----
-    type QtyChange = { i: number; oldQty: number; newQty: number; stockDelta: number; batch: any };
-    const qtyChanges = new Map<number, QtyChange>();
+    // ---- Plan every qty change / removal before issuing any writes ----
+    type BatchWrite = { ref: any; data: Record<string, any> };
+    type QtyPlan = {
+      oldQty: number;
+      newQty: number;
+      batchWrites: BatchWrite[];
+      unitRefs: any[];
+      stockDelta: Record<StockLocation, number>; // per location, signed
+    };
+    const plans = new Map<number, QtyPlan>();
+
     (patch.items ?? []).forEach((p, i) => {
-      if (!itemSnaps[i].exists()) throw new Error("A GRN item no longer exists — reload and try again");
-      const item = itemSnaps[i].data() as any;
+      const item = itemData[i];
+      if (!item) throw new Error("A GRN item no longer exists — reload and try again");
       if (item.removed) {
         if (p.remove || p.qty != null) throw new Error(`"${item.productName}" was already removed from this GRN`);
         return;
       }
-      const newQty = p.remove ? 0 : p.qty ?? item.qty;
-      if (newQty === item.qty) return;
+      if (!qtyTouched(i)) return;
 
-      const isSerial = item.serials?.length > 0;
-      if (isSerial && !p.remove) {
-        throw new Error(`"${item.productName}" is serialized — its quantity can't be changed, only removed`);
-      }
-      const batchSnap = batchSnaps[i];
-      if (!batchSnap || !batchSnap.exists()) {
+      const oldQty: number = item.qty;
+      const newQty = p.remove ? 0 : (p.qty as number);
+      const stockDelta: Record<StockLocation, number> = { stores: 0, showroom: 0 };
+      const batchWrites: BatchWrite[] = [];
+
+      const [lineSnap, ...childSnaps] = batchSnaps[i];
+      if (!lineSnap || !lineSnap.exists()) {
         throw new Error(`Stock batch for "${item.productName}" was not found — can't change its quantity`);
       }
-      const batch = batchSnap.data() as any;
+      const lineBatch = lineSnap.data() as any;
 
-      if (isSerial) {
-        const units = unitSnaps[i].map((u) => (u.exists() ? (u.data() as any) : null));
-        const notAvailable = units.filter((u) => !u || u.status !== "in_stock" || (u.location ?? "stores") !== location);
-        if (units.length !== item.serials.length || notAvailable.length > 0) {
+      if (item.serials?.length > 0) {
+        if (!p.remove) throw new Error(`"${item.productName}" is serialized — its quantity can't be changed, only removed`);
+        const units = unitSnaps[i].map((u: any) => (u.exists() ? (u.data() as any) : null));
+        const notInStock = units.filter((u: any) => !u || u.status !== "in_stock");
+        if (units.length !== item.serials.length || notInStock.length > 0) {
           throw new Error(
-            `Can't remove "${item.productName}" — ${notAvailable.length || "some"} unit(s) were already sold, issued, transferred or deleted. Use Stock Out instead.`
+            `Can't remove "${item.productName}" — ${notInStock.length || "some"} unit(s) were already sold, issued or deleted. Use Stock Out instead.`
           );
         }
-        qtyChanges.set(i, { i, oldQty: item.qty, newQty, stockDelta: -units.length, batch });
+        // Serial Transfers move the unit, not the batch — so count by unit location.
+        units.forEach((u: any) => { stockDelta[(u.location ?? "stores") as StockLocation] -= 1; });
+        batchWrites.push({ ref: lineSnap.ref, data: { remainingQty: 0, totalQty: 0, status: "voided" } });
+        plans.set(i, { oldQty, newQty, batchWrites, unitRefs: unitSnaps[i].map((u: any) => u.ref), stockDelta });
+        return;
+      }
+
+      // Non-serialized: stock still held = GRN batch + Showroom batches transferred from it.
+      const holdings = [lineSnap, ...childSnaps.filter((s: any) => s.exists())].map((s: any) => ({
+        ref: s.ref,
+        isLine: s.ref.id === lineSnap.ref.id,
+        data: s.data() as any,
+        location: ((s.data() as any).location ?? "stores") as StockLocation,
+      }));
+      const held = holdings.reduce((sum, h) => sum + Math.max(0, h.data.remainingQty ?? 0), 0);
+      const used = Math.max(0, oldQty - held);
+
+      if (newQty > oldQty) {
+        const add = newQty - oldQty;
+        const remainingAfter = (lineBatch.remainingQty ?? 0) + add;
+        batchWrites.push({
+          ref: lineSnap.ref,
+          data: { totalQty: (lineBatch.totalQty ?? oldQty) + add, remainingQty: remainingAfter, status: "active" },
+        });
+        stockDelta[(lineBatch.location ?? grnLocation) as StockLocation] += add;
       } else {
-        const remaining = batch.remainingQty ?? 0;
-        const used = (batch.totalQty ?? item.qty) - remaining;
         if (newQty < used) {
           throw new Error(
             p.remove
-              ? `Can't remove "${item.productName}" — ${used} already sold / transferred / stocked out. Reduce qty to ${used} instead, or use Stock Out.`
-              : `"${item.productName}" can't go below ${used} — that many were already sold / transferred / stocked out.`
+              ? `Can't remove "${item.productName}" — ${used} of ${oldQty} already sold / stocked out. Reduce qty to ${used} instead.`
+              : `"${item.productName}" can't go below ${used} — that many were already sold / stocked out.`
           );
         }
-        // Removal takes back exactly what the batch still holds (so stock
-        // aggregates stay equal to Σ batch.remainingQty even if the batch was
-        // hand-edited on the Products page); a qty change moves it by the delta.
-        qtyChanges.set(i, { i, oldQty: item.qty, newQty, stockDelta: p.remove ? -remaining : newQty - item.qty, batch });
+        // Removal takes back everything still held; a reduction just the difference.
+        let toTake = p.remove ? held : oldQty - newQty;
+        for (const h of holdings) {
+          const remaining = Math.max(0, h.data.remainingQty ?? 0);
+          const take = Math.min(toTake, remaining);
+          toTake -= take;
+          const remainingAfter = remaining - take;
+          if (p.remove) {
+            batchWrites.push({ ref: h.ref, data: { remainingQty: 0, totalQty: 0, status: "voided" } });
+          } else if (take > 0 || h.isLine) {
+            batchWrites.push({
+              ref: h.ref,
+              data: {
+                // The GRN batch's totalQty mirrors the corrected received qty;
+                // Showroom batches shrink by what was taken back from them.
+                totalQty: h.isLine
+                  ? Math.max(remainingAfter, (h.data.totalQty ?? oldQty) - (oldQty - newQty))
+                  : Math.max(remainingAfter, (h.data.totalQty ?? 0) - take),
+                remainingQty: remainingAfter,
+                status: remainingAfter <= 0 ? "depleted" : "active",
+              },
+            });
+          }
+          stockDelta[h.location] -= take;
+        }
       }
+      plans.set(i, { oldQty, newQty, batchWrites, unitRefs: [], stockDelta });
     });
 
     // ---- Writes ----
@@ -2037,59 +2110,57 @@ export async function adminUpdateGrn(
     let costDelta = 0;
 
     (patch.items ?? []).forEach((itemPatch, i) => {
-      const itemBefore = itemSnaps[i].data() as any;
+      const itemBefore = itemData[i];
       if (itemBefore.removed) return;
-      const qc = qtyChanges.get(i);
+      const plan = plans.get(i);
       const oldCost = itemBefore.costPrice ?? 0;
       const newCost = itemPatch.remove ? oldCost : itemPatch.costPrice ?? oldCost;
       const oldQty = itemBefore.qty ?? 0;
-      const newQty = qc ? qc.newQty : oldQty;
+      const newQty = plan ? plan.newQty : oldQty;
       costDelta += newQty * newCost - oldQty * oldCost;
 
-      if (qc) {
-        const batchRef = doc(db, "products", itemBefore.productId, "batches", itemBefore.batchId);
+      if (plan) {
+        plan.batchWrites.forEach((w) => tx.update(w.ref, w.data));
+        // Deleted rather than flagged: getUnitsBySerialNumbers() matches by
+        // serial alone, so a leftover doc would collide when the same serial
+        // is re-received on a corrected GRN.
+        plan.unitRefs.forEach((ref) => tx.delete(ref));
 
         if (itemPatch.remove) {
           tx.update(itemRefs[i], { removed: true, removedAt: serverTimestamp(), removedByName: performedBy.name });
-          tx.update(batchRef, { remainingQty: 0, totalQty: 0, status: "voided" });
-          // Deleted rather than flagged: getUnitsBySerialNumbers() matches by
-          // serial alone, so a leftover doc would collide when the same serial
-          // is re-received on a corrected GRN.
-          unitSnaps[i].forEach((u) => tx.delete(u.ref));
-          changes.push({ field: `items.${itemBefore.productName}`, before: `qty ${qc.oldQty}`, after: "removed" });
+          changes.push({ field: `items.${itemBefore.productName}`, before: `qty ${plan.oldQty}`, after: "removed" });
         } else {
-          const remainingAfter = (qc.batch.remainingQty ?? 0) + qc.stockDelta;
-          tx.update(itemRefs[i], { qty: qc.newQty });
-          tx.update(batchRef, {
-            totalQty: (qc.batch.totalQty ?? qc.oldQty) + qc.stockDelta,
-            remainingQty: remainingAfter,
-            status: remainingAfter <= 0 ? "depleted" : "active",
-          });
-          changes.push({ field: `items.${itemBefore.productName}.qty`, before: qc.oldQty, after: qc.newQty });
+          tx.update(itemRefs[i], { qty: plan.newQty });
+          changes.push({ field: `items.${itemBefore.productName}.qty`, before: plan.oldQty, after: plan.newQty });
         }
 
-        if (qc.stockDelta !== 0) {
+        const { stores, showroom } = plan.stockDelta;
+        if (stores !== 0 || showroom !== 0) {
           tx.update(doc(db, "products", itemBefore.productId), {
-            totalStock: increment(qc.stockDelta),
-            [location === "showroom" ? "showroomStock" : "storesStock"]: increment(qc.stockDelta),
-            ...(qc.stockDelta > 0 ? { lowStockAlerted: false } : {}),
+            totalStock: increment(stores + showroom),
+            ...(stores !== 0 ? { storesStock: increment(stores) } : {}),
+            ...(showroom !== 0 ? { showroomStock: increment(showroom) } : {}),
+            ...(stores + showroom > 0 ? { lowStockAlerted: false } : {}),
           });
+        }
+        (["stores", "showroom"] as StockLocation[]).forEach((loc) => {
+          if (plan.stockDelta[loc] === 0) return;
           tx.set(doc(collection(db, "stock_movements")), {
             productId: itemBefore.productId,
             type: "adjustment",
-            qty: qc.stockDelta,
+            qty: plan.stockDelta[loc],
             referenceId: grnId,
             referenceType: "grn_edit",
             note: itemPatch.remove
               ? `Removed from ${before.grnNo} (entered by mistake)`
-              : `${before.grnNo} qty corrected ${qc.oldQty} → ${qc.newQty}`,
+              : `${before.grnNo} qty corrected ${plan.oldQty} → ${plan.newQty}`,
             performedBy: performedBy.uid,
             performedByName: performedBy.name,
-            location,
+            location: loc,
             supplierName: before.supplierName ?? "",
             createdAt: serverTimestamp(),
           });
-        }
+        });
 
         if (itemPatch.remove) return; // no price edits on a removed line
       }

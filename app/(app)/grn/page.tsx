@@ -395,7 +395,7 @@ export default function GrnPage() {
                       ))}
                     </div>
                     <p className="text-[11px] text-zinc-400 mt-2">
-                      Changing qty, cost or supplier, or removing an item, automatically adjusts stock, the GRN total and the supplier balance. Stock already sold or transferred can't be removed.
+                      Changing qty, cost or supplier, or removing an item, automatically adjusts stock, the GRN total and the supplier balance. Stock transferred to Showroom is taken back from there; stock already sold or stocked out can't be removed.
                     </p>
                   </div>
                   {editError && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>}
