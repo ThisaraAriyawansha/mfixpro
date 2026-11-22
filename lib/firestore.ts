@@ -1,8 +1,9 @@
 import {
-  collection, doc, addDoc, updateDoc, deleteDoc, setDoc,
+  collection, doc,
+  addDoc as fsAddDoc, updateDoc as fsUpdateDoc, deleteDoc as fsDeleteDoc, setDoc as fsSetDoc,
   getDocs, getDoc, query, where, orderBy, limit, startAfter,
   serverTimestamp, FieldValue, increment,
-  runTransaction, Timestamp, writeBatch, getCountFromServer, deleteField,
+  runTransaction as fsRunTransaction, Timestamp, writeBatch as fsWriteBatch, getCountFromServer, deleteField,
   type QueryConstraint, type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { initializeApp, deleteApp } from "firebase/app";
@@ -14,6 +15,71 @@ import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
 import { dateInputValue } from "./dates";
 import { isEditableRole, getDefaultPermissions, PERMISSION_CATALOG } from "./permissions";
+
+// ─── SHARED READ CACHE ────────────────────────────────────────────────────────
+// Products, brands and categories are loaded by most pages (POS, GRN, stock
+// transfer/out, quotations, dashboard…). Re-reading the whole collection on
+// every page open burns the Firestore daily read quota, so each list is kept
+// in memory for CACHE_TTL_MS and shared between pages.
+//
+// Every write in this file goes through the wrapped write functions below,
+// which clear the cache once the write finishes — so after a sale, GRN,
+// transfer, product edit, etc. the next read gets fresh stock. Changes made on
+// another device show up after the TTL, or straight away via a page's Refresh
+// button (which passes { force: true }). Stock checks inside sale/transfer
+// transactions always read the server, so a stale list can't oversell.
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+type ListCacheEntry = { data: any[]; at: number };
+const listCache = new Map<string, ListCacheEntry>();
+const listInflight = new Map<string, Promise<any[]>>();
+// Bumped on every invalidation so a fetch that started before a write can't
+// put its (now stale) result back into the cache.
+let cacheGeneration = 0;
+
+export type CacheOptions = { force?: boolean };
+
+export function invalidateReadCache() {
+  cacheGeneration++;
+  listCache.clear();
+  listInflight.clear();
+}
+
+async function cachedList(key: string, fetcher: () => Promise<any[]>, opts?: CacheOptions): Promise<any[]> {
+  if (!opts?.force) {
+    const hit = listCache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data.slice();
+    const pending = listInflight.get(key);
+    if (pending) return (await pending).slice();
+  }
+  const gen = cacheGeneration;
+  const p = fetcher();
+  listInflight.set(key, p);
+  try {
+    const data = await p;
+    if (gen === cacheGeneration) listCache.set(key, { data, at: Date.now() });
+    return data.slice();
+  } finally {
+    if (listInflight.get(key) === p) listInflight.delete(key);
+  }
+}
+
+// Write wrappers: same signatures as the Firestore originals, plus a cache
+// clear once the write settles (success or failure — a failed transaction may
+// still have raced with someone else's write).
+const runTransaction = ((...args: Parameters<typeof fsRunTransaction>) =>
+  fsRunTransaction(...args).finally(invalidateReadCache)) as typeof fsRunTransaction;
+const writeBatch = ((...args: Parameters<typeof fsWriteBatch>) => {
+  const batch = fsWriteBatch(...args);
+  const commit = batch.commit.bind(batch);
+  batch.commit = () => commit().finally(invalidateReadCache);
+  return batch;
+}) as typeof fsWriteBatch;
+const addDoc = ((...args: any[]) => (fsAddDoc as any)(...args).finally(invalidateReadCache)) as typeof fsAddDoc;
+const updateDoc = ((...args: any[]) => (fsUpdateDoc as any)(...args).finally(invalidateReadCache)) as typeof fsUpdateDoc;
+const setDoc = ((...args: any[]) => (fsSetDoc as any)(...args).finally(invalidateReadCache)) as typeof fsSetDoc;
+const deleteDoc = ((...args: any[]) => (fsDeleteDoc as any)(...args).finally(invalidateReadCache)) as typeof fsDeleteDoc;
 
 // Date-range filter on createdAt, newest first. List pages pass a default
 // window (e.g. the last 30 days) so their read cost doesn't grow with the
@@ -41,9 +107,11 @@ export function dateInputRange(fromDate: string, toDate: string): DateRange {
 
 // ─── BRANDS ───────────────────────────────────────────────────────────────────
 
-export async function getBrands() {
-  const snap = await getDocs(query(collection(db, "brands"), orderBy("name")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+export async function getBrands(opts?: CacheOptions) {
+  return cachedList("brands", async () => {
+    const snap = await getDocs(query(collection(db, "brands"), orderBy("name")));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }, opts);
 }
 
 export async function addBrand(data: { name: string; description?: string }) {
@@ -79,9 +147,11 @@ export async function deleteService(id: string) {
 
 // ─── MAIN CATEGORIES ──────────────────────────────────────────────────────────
 
-export async function getMainCategories() {
-  const snap = await getDocs(query(collection(db, "main_categories"), orderBy("name")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+export async function getMainCategories(opts?: CacheOptions) {
+  return cachedList("main_categories", async () => {
+    const snap = await getDocs(query(collection(db, "main_categories"), orderBy("name")));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }, opts);
 }
 
 export async function addMainCategory(data: { name: string; description?: string }) {
@@ -98,12 +168,14 @@ export async function deleteMainCategory(id: string) {
 
 // ─── SUB CATEGORIES ───────────────────────────────────────────────────────────
 
-export async function getSubCategories(mainCategoryId?: string) {
-  const q = mainCategoryId
-    ? query(collection(db, "sub_categories"), where("mainCategoryId", "==", mainCategoryId), orderBy("name"))
-    : query(collection(db, "sub_categories"), orderBy("name"));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+export async function getSubCategories(mainCategoryId?: string, opts?: CacheOptions) {
+  return cachedList(`sub_categories:${mainCategoryId ?? ""}`, async () => {
+    const q = mainCategoryId
+      ? query(collection(db, "sub_categories"), where("mainCategoryId", "==", mainCategoryId), orderBy("name"))
+      : query(collection(db, "sub_categories"), orderBy("name"));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }, opts);
 }
 
 export async function addSubCategory(data: { name: string; mainCategoryId: string; description?: string }) {
@@ -120,9 +192,11 @@ export async function deleteSubCategory(id: string) {
 
 // ─── PRODUCTS ─────────────────────────────────────────────────────────────────
 
-export async function getProducts() {
-  const snap = await getDocs(query(collection(db, "products"), orderBy("name")));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+export async function getProducts(opts?: CacheOptions) {
+  return cachedList("products", async () => {
+    const snap = await getDocs(query(collection(db, "products"), orderBy("name")));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }, opts);
 }
 
 export async function getProduct(id: string) {
@@ -3025,6 +3099,31 @@ export async function addExpense(data: ExpenseData): Promise<{ expenseId: string
 
     return { expenseId: expenseRef.id, expenseNo };
   });
+}
+
+// ─── EXPENSE CATEGORIES (user-defined, on top of the built-in ones) ───────────
+// The category's name is stored directly as the expense's `category` value,
+// so existing labeling (`LABEL[c] || c`) displays it without a lookup.
+
+export async function getExpenseCategories(): Promise<{ id: string; name: string }[]> {
+  const snap = await getDocs(query(collection(db, "expenseCategories"), orderBy("name")));
+  return snap.docs.map((d) => ({ id: d.id, name: (d.data().name as string) || "" }));
+}
+
+export async function addExpenseCategory(name: string, reserved: string[] = []): Promise<{ id: string; name: string }> {
+  const clean = name.trim().replace(/\s+/g, " ");
+  if (!clean) throw new Error("Category name is required");
+  if (clean.length > 40) throw new Error("Category name is too long (max 40 characters)");
+  const lower = clean.toLowerCase();
+  if (reserved.some((r) => r.toLowerCase() === lower)) throw new Error("That category already exists");
+  const existing = await getExpenseCategories();
+  if (existing.some((c) => c.name.toLowerCase() === lower)) throw new Error("That category already exists");
+  const ref = await addDoc(collection(db, "expenseCategories"), { name: clean, createdAt: serverTimestamp() });
+  return { id: ref.id, name: clean };
+}
+
+export async function deleteExpenseCategory(id: string) {
+  await deleteDoc(doc(db, "expenseCategories", id));
 }
 
 export async function getExpenses(opts?: { category?: ExpenseCategory; fromDate?: Date; toDate?: Date }) {

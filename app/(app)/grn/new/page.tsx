@@ -7,6 +7,7 @@ import { Product, Supplier, StockLocation } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { useDraftState, clearDraft } from "@/hooks/useDraftState";
 
 const DRAFT = "grnNew";
@@ -43,11 +44,14 @@ export default function NewGrnPage() {
   const [sellingPrice, setSellingPrice] = useDraftState(DRAFT, "sellingPrice", "");
   const [serials, setSerials] = useDraftState(DRAFT, "serials", "");
 
-  useEffect(() => {
-    Promise.all([getProducts(), getSuppliers()]).then(([p, s]) => {
+  const loadData = (force = false) =>
+    Promise.all([getProducts({ force }), getSuppliers()]).then(([p, s]) => {
       setProducts(p as Product[]);
       setSuppliers(s as Supplier[]);
     });
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   const selectedProduct = products.find((p) => p.id === productId);
@@ -137,7 +141,10 @@ export default function NewGrnPage() {
       <Link href="/grn" className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-ink mb-4">
         <ArrowLeft size={14} /> Back to GRN
       </Link>
-      <h1 className="font-prata text-2xl text-ink mb-1">New GRN</h1>
+      <div className="flex items-center justify-between gap-4 mb-1">
+        <h1 className="font-prata text-2xl text-ink">New GRN</h1>
+        <RefreshButton onRefresh={() => loadData(true)} />
+      </div>
       <p className="text-zinc-500 text-sm mb-8">
         Received items are added to {location === "showroom" ? "Showroom Stock and can be sold right away" : "Stores Stock"}.
       </p>

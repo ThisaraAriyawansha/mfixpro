@@ -15,6 +15,7 @@ import Pagination from "@/components/ui/Pagination";
 import { useAuth } from "@/hooks/useAuth";
 import { downloadElementAsPdf } from "@/lib/pdf";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import RefreshButton from "@/components/ui/RefreshButton";
 
 const PAGE_SIZE = 10;
 
@@ -82,10 +83,15 @@ export default function QuotationsPage() {
   const loadQuotations = () =>
     getQuotations(dateInputRange(fromDate, toDate)).then((q) => { setQuotations(q); setLoading(false); });
 
+  const loadProducts = (force = false) =>
+    getProducts({ force }).then((p) => setProducts(p as Product[]));
+
   useEffect(() => {
     if (!canView) return;
-    getProducts().then((p) => setProducts(p as Product[]));
+    loadProducts();
   }, [canView]);
+
+  const refreshAll = () => Promise.all([loadProducts(true), loadQuotations()]);
 
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
@@ -286,6 +292,7 @@ export default function QuotationsPage() {
             <p className="text-xs text-zinc-400 uppercase tracking-wider">Total · {filtered.length} quotations</p>
             <p className="font-poppins font-semibold text-xl text-ink">Rs. {filteredTotal.toLocaleString()}</p>
           </div>
+          <RefreshButton onRefresh={refreshAll} />
           <button onClick={openCreate} className="nexora-btn nexora-btn-primary text-sm">
             <Plus size={14} /> New Quotation
           </button>

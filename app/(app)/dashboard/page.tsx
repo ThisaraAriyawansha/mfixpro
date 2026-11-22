@@ -13,6 +13,7 @@ import {
 import Link from "next/link";
 import { useAuth } from "@/hooks/useAuth";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { SALE_PAYMENT_METHOD_LABEL } from "@/types";
 
 type Period = "today" | "7d" | "30d";
@@ -153,8 +154,9 @@ export default function DashboardPage() {
   } | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
-  useEffect(() => {
-    async function load() {
+  // force = true (Refresh button) skips the shared product/category cache.
+  async function load(force = false) {
+      const cacheOpts = { force };
       // 60 days = the longest selectable period (30 days) plus an equal-length
       // comparison window before it. Bounded so the read cost doesn't grow
       // forever as the shop accumulates years of sales history.
@@ -165,10 +167,10 @@ export default function DashboardPage() {
         getWindowDailyStats(windowStart),
         getRecentSales(12).catch(() => []),
         getUnsettledSales().catch(() => []),
-        getProducts(),
+        getProducts(cacheOpts),
         getCustomers({ fromDate: windowStart }),
         countCustomers().catch(() => 0),
-        getMainCategories(),
+        getMainCategories(cacheOpts),
         canViewJobs ? getDashboardJobs(windowStart).catch(() => []) : Promise.resolve([]),
         canViewJobs ? getJobStatusCounts().catch(() => null) : Promise.resolve(null),
         canViewFinance ? getExpenses({ fromDate: windowStart }).catch(() => []) : Promise.resolve([]),
@@ -180,7 +182,9 @@ export default function DashboardPage() {
         unsettled,
         products, customers, customerCount, mainCats, jobs, jobCounts, expenses,
       });
-    }
+  }
+
+  useEffect(() => {
     load();
   }, [canViewJobs, canViewFinance]);
 
@@ -402,6 +406,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <RefreshButton onRefresh={() => load(true)} />
           <div className="inline-flex rounded-lg bg-zinc-100 p-1">
             {PERIODS.map((p) => (
               <button

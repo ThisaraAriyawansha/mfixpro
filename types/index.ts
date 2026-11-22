@@ -310,7 +310,10 @@ export interface Shift {
   reviewNote?: string;
 }
 
-export type ExpenseCategory = "rent" | "utilities" | "salaries" | "maintenance" | "marketing" | "other";
+// Built-in categories, plus any custom category name added from the Finance
+// page (stored in the expenseCategories collection). `string & {}` keeps
+// autocomplete for the built-ins while allowing custom names.
+export type ExpenseCategory = "rent" | "utilities" | "salaries" | "maintenance" | "marketing" | "other" | (string & {});
 
 export interface Expense {
   id: string;

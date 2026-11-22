@@ -7,6 +7,7 @@ import { Product } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { useDraftState, clearDraft } from "@/hooks/useDraftState";
 
 const DRAFT = "stockOutNew";
@@ -45,13 +46,16 @@ export default function NewStockOutPage() {
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
 
-  useEffect(() => {
-    // Parts are only issued against jobs still in the shop — delivered /
-    // written-off jobs aren't loaded, so this list doesn't grow forever.
-    Promise.all([getProducts(), getJobsByStatus(ACTIVE_JOB_STATUSES)]).then(([p, j]) => {
+  // Parts are only issued against jobs still in the shop — delivered /
+  // written-off jobs aren't loaded, so this list doesn't grow forever.
+  const loadData = (force = false) =>
+    Promise.all([getProducts({ force }), getJobsByStatus(ACTIVE_JOB_STATUSES)]).then(([p, j]) => {
       setProducts(p as Product[]);
       setJobs(j as any[]);
     });
+
+  useEffect(() => {
+    loadData();
   }, []);
 
   const stockField = location === "showroom" ? "showroomStock" : "storesStock";
@@ -166,7 +170,10 @@ export default function NewStockOutPage() {
       <Link href="/stock-out" className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-ink mb-4">
         <ArrowLeft size={14} /> Back to Stock Out
       </Link>
-      <h1 className="font-prata text-2xl text-ink mb-1">New Stock Out</h1>
+      <div className="flex items-center justify-between gap-4 mb-1">
+        <h1 className="font-prata text-2xl text-ink">New Stock Out</h1>
+        <RefreshButton onRefresh={() => loadData(true)} />
+      </div>
       <p className="text-zinc-500 text-sm mb-8">Issue stock out for a repair job, an off-POS sale, or another reason.</p>
 
       <div className="nexora-card p-4 sm:p-6 mb-6 space-y-4">

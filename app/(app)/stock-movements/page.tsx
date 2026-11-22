@@ -7,6 +7,7 @@ import Pagination from "@/components/ui/Pagination";
 import { rowsToCSV, downloadCSV } from "@/lib/csv";
 import { useAuth } from "@/hooks/useAuth";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import RefreshButton from "@/components/ui/RefreshButton";
 
 const PAGE_SIZE = 20;
 
@@ -46,12 +47,18 @@ export default function StockMovementsPage() {
   const [activeTypes, setActiveTypes] = useState<string[]>([]);
   const [page, setPage] = useState(1);
 
-  useEffect(() => {
-    if (!canView) return;
-    getProducts().then((p) =>
+  const loadProducts = (force = false) =>
+    getProducts({ force }).then((p) =>
       setProducts(new Map((p as any[]).map((prod) => [prod.id, { name: prod.name, sku: prod.sku }])))
     );
+
+  useEffect(() => {
+    if (!canView) return;
+    loadProducts();
   }, [canView]);
+
+  // Bumped by the Refresh button to re-run the movements query below.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!canView) { setLoading(false); return; }
@@ -63,7 +70,12 @@ export default function StockMovementsPage() {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [canView, fromDate, toDate]);
+  }, [canView, fromDate, toDate, reloadKey]);
+
+  const refreshAll = async () => {
+    setReloadKey((k) => k + 1);
+    await loadProducts(true);
+  };
 
   useEffect(() => {
     setPage(1);
@@ -125,13 +137,16 @@ export default function StockMovementsPage() {
             {filtered.length} of {movements.length} movements{fromDate || toDate ? " in this date range" : ""}
           </p>
         </div>
-        <button
-          onClick={handleExportCSV}
-          disabled={filtered.length === 0}
-          className="nexora-btn nexora-btn-outline self-start sm:self-auto disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Download size={14} /> Download CSV
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <RefreshButton onRefresh={refreshAll} />
+          <button
+            onClick={handleExportCSV}
+            disabled={filtered.length === 0}
+            className="nexora-btn nexora-btn-outline disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={14} /> Download CSV
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-4">

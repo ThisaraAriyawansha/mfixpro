@@ -10,6 +10,7 @@ import { useReactToPrint } from "react-to-print";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import { downloadElementAsPdf, getElementPdfBase64 } from "@/lib/pdf";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import RefreshButton from "@/components/ui/RefreshButton";
 
 // A quick service on the bill. `service` (a snapshot of the catalog entry)
 // and `values` (raw inputs keyed by field id) let the line be reopened and
@@ -200,27 +201,30 @@ export default function SalesPage() {
     }
   }
 
+  // A failed services read (e.g. rules not deployed yet) must not take
+  // the whole POS down with it — products/jobs still load, the tab is empty.
+  // Only "ready" (plus legacy "done") jobs are billable, and customers are
+  // searched on demand in the picker — neither loads the full history, so
+  // opening the POS doesn't get more expensive as jobs/customers pile up.
+  // force = true (Refresh button) skips the shared product/category cache.
+  async function loadPosData(force = false) {
+    const opts = { force };
+    const [p, mc, sc, j, sv] = await Promise.all([
+      getProducts(opts), getMainCategories(opts), getSubCategories(undefined, opts), getJobsByStatus(["ready", "done"]),
+      getServices().catch((err) => { console.error("Failed to load services:", err); return []; }),
+    ]);
+    setServices((sv as Service[]).filter(s => s.active !== false));
+    // POS only sells from Showroom Stock — items with stock only in Stores
+    // must be Transferred to Showroom first.
+    setProducts(p.filter((p: any) => p.active && p.showroomStock > 0) as Product[]);
+    setMainCats(mc as MainCategory[]);
+    setSubCats(sc as SubCategory[]);
+    setBillableJobs(j);
+    setJobsLoaded(true);
+  }
+
   useEffect(() => {
-    async function load() {
-      // A failed services read (e.g. rules not deployed yet) must not take
-      // the whole POS down with it — products/jobs still load, the tab is empty.
-      // Only "ready" (plus legacy "done") jobs are billable, and customers are
-      // searched on demand in the picker — neither loads the full history, so
-      // opening the POS doesn't get more expensive as jobs/customers pile up.
-      const [p, mc, sc, j, sv] = await Promise.all([
-        getProducts(), getMainCategories(), getSubCategories(), getJobsByStatus(["ready", "done"]),
-        getServices().catch((err) => { console.error("Failed to load services:", err); return []; }),
-      ]);
-      setServices((sv as Service[]).filter(s => s.active !== false));
-      // POS only sells from Showroom Stock — items with stock only in Stores
-      // must be Transferred to Showroom first.
-      setProducts(p.filter((p: any) => p.active && p.showroomStock > 0) as Product[]);
-      setMainCats(mc as MainCategory[]);
-      setSubCats(sc as SubCategory[]);
-      setBillableJobs(j);
-      setJobsLoaded(true);
-    }
-    load();
+    loadPosData();
   }, []);
 
   // A restored draft may reference a job that was billed/delivered elsewhere
@@ -814,6 +818,7 @@ export default function SalesPage() {
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h1 className="font-prata text-xl text-ink">New Sale</h1>
             <div className="flex items-center gap-2 flex-wrap">
+              <RefreshButton onRefresh={() => loadPosData(true)} className="py-1.5" />
               <button
                 onClick={() => setShowJobPicker(true)}
                 className="nexora-btn nexora-btn-outline text-xs py-1.5"

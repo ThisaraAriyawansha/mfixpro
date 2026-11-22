@@ -12,6 +12,7 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog";
 import SearchableSelect from "@/components/ui/SearchableSelect";
 import Pagination from "@/components/ui/Pagination";
 import AccessRestricted from "@/components/ui/AccessRestricted";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { useDraftState } from "@/hooks/useDraftState";
 
 const PAGE_SIZE = 10;
@@ -134,9 +135,10 @@ export default function ProductsPage() {
     setPage(1);
   }, [search, filterMainCat, filterSubCat, sortBy]);
 
-  async function loadData() {
+  async function loadData(force = false) {
+    const opts = { force };
     const [p, b, mc, sc] = await Promise.all([
-      getProducts(), getBrands(), getMainCategories(), getSubCategories(),
+      getProducts(opts), getBrands(opts), getMainCategories(opts), getSubCategories(undefined, opts),
     ]);
     setProducts(p as Product[]);
     setBrands(b as Brand[]);
@@ -448,9 +450,12 @@ export default function ProductsPage() {
           <h1 className="font-prata text-2xl text-ink">Products</h1>
           <p className="text-zinc-500 text-sm mt-1">{products.length} items in inventory</p>
         </div>
-        <button onClick={openAdd} className="nexora-btn nexora-btn-primary self-start sm:self-auto">
-          <Plus size={14} /> Add Product
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <RefreshButton onRefresh={() => loadData(true)} />
+          <button onClick={openAdd} className="nexora-btn nexora-btn-primary">
+            <Plus size={14} /> Add Product
+          </button>
+        </div>
       </div>
 
       {/* Search & filters */}

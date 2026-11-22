@@ -112,6 +112,7 @@ export default function SettingsPage() {
   const [deleteError, setDeleteError] = useState("");
   const [usageStats, setUsageStats] = useState<CollectionStat[]>([]);
   const [loadingUsage, setLoadingUsage] = useState(true);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [showCleanModal, setShowCleanModal] = useState(false);
   const [cleanTarget, setCleanTarget] = useState<CollectionStat | null>(null);
   const [cleanConfirm, setCleanConfirm] = useState("");
@@ -158,24 +159,43 @@ export default function SettingsPage() {
     }
   };
 
+  const refreshUsage = () => {
+    setLoadingUsage(true);
+    setUsageError(null);
+    getUsageStats()
+      .then((s) => setUsageStats(s))
+      .catch((e: any) => {
+        console.error("Failed to load usage stats", e);
+        setUsageError(
+          e?.code === "resource-exhausted" || /quota/i.test(e?.message ?? "")
+            ? "Firestore daily quota exceeded. Usage will be available again after the quota resets (midnight Pacific time)."
+            : "Could not load usage stats."
+        );
+      })
+      .finally(() => setLoadingUsage(false));
+  };
+
   useEffect(() => {
     getShopSettings().then((s) => {
       if (s) {
         setShopForm({ name: s.name || "", phone: s.phone || "", email: s.email || "", address: s.address || "" });
         setNotifyEmails(s.notifyEmails || []);
       }
-    });
+    }).catch((e) => console.error("Failed to load shop settings", e));
     // Listing every team account and counting the "users" collection require
     // Admin+ under Firestore rules — skip them entirely for Cashier/Manager
     // instead of letting the denied read reject and crash the page.
     if (canClean) {
-      getTeamUsers().then(setTeamUsers);
-      getUsageStats().then((s) => { setUsageStats(s); setLoadingUsage(false); });
+      getTeamUsers().then(setTeamUsers).catch((e) => console.error("Failed to load team users", e));
+      refreshUsage();
     } else {
       setLoadingUsage(false);
     }
     if (isSuperAdmin) {
-      getStockLocationMigrationStatus().then((s) => { setMigrationStatus(s); setLoadingMigrationStatus(false); });
+      getStockLocationMigrationStatus()
+        .then((s) => setMigrationStatus(s))
+        .catch((e) => console.error("Failed to load migration status", e))
+        .finally(() => setLoadingMigrationStatus(false));
     } else {
       setLoadingMigrationStatus(false);
     }
@@ -566,7 +586,7 @@ export default function SettingsPage() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setLoadingUsage(true); getUsageStats().then((s) => { setUsageStats(s); setLoadingUsage(false); }); }}
+              onClick={refreshUsage}
               disabled={loadingUsage}
               className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-ink border border-zinc-200 hover:border-zinc-400 px-2 py-0.5 rounded transition-colors disabled:opacity-50"
             >
@@ -585,6 +605,8 @@ export default function SettingsPage() {
 
         {loadingUsage ? (
           <p className="text-sm text-zinc-400 py-4 text-center">Calculating usage…</p>
+        ) : usageError ? (
+          <p className="text-sm text-red-600 py-4 text-center">{usageError}</p>
         ) : (() => {
           const totalDocs  = usageStats.reduce((s, c) => s + c.count, 0);
           const totalBytes = usageStats.reduce((s, c) => s + c.count * c.avgBytes, 0);
@@ -1033,7 +1055,7 @@ export default function SettingsPage() {
             const deleted = await cleanCollection(cleanTarget.key);
             setCleanResult({ count: deleted });
             setCleanConfirm("");
-            getUsageStats().then(s => { setUsageStats(s); setLoadingUsage(false); });
+            refreshUsage();
           } finally {
             setCleaning(false);
           }

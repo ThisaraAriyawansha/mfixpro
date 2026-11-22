@@ -428,6 +428,15 @@ service cloud.firestore {
       allow delete: if hasPerm('finance.deleteExpense');
     }
 
+    // User-defined expense categories (in addition to the built-in ones
+    // hardcoded on the Finance page). Anyone who can log an expense can add
+    // a category; removing one follows the expense delete permission.
+    match /expenseCategories/{id} {
+      allow read: if isAuth();
+      allow create: if hasPerm('finance.addExpense');
+      allow delete: if hasPerm('finance.deleteExpense');
+    }
+
     // Payroll records — single-owner collection (only the Salary page reads
     // it), so unlike products/customers/suppliers its view permission is
     // safe to rule-enforce, same reasoning as quotations/grns above. Unlike

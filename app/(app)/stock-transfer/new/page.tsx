@@ -7,6 +7,7 @@ import { Product } from "@/types";
 import { Plus, Trash2, ArrowLeft, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import SearchableSelect from "@/components/ui/SearchableSelect";
+import RefreshButton from "@/components/ui/RefreshButton";
 import { useDraftState, clearDraft } from "@/hooks/useDraftState";
 
 const DRAFT = "stockTransferNew";
@@ -37,8 +38,11 @@ export default function NewStockTransferPage() {
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [loadingUnits, setLoadingUnits] = useState(false);
 
+  const loadProducts = (force = false) =>
+    getProducts({ force }).then((p) => setProducts((p as Product[]).filter((x) => x.storesStock > 0)));
+
   useEffect(() => {
-    getProducts().then((p) => setProducts((p as Product[]).filter((x) => x.storesStock > 0)));
+    loadProducts();
   }, []);
 
   const selectedProduct = products.find((p) => p.id === productId);
@@ -133,7 +137,10 @@ export default function NewStockTransferPage() {
       <Link href="/stock-transfer" className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-ink mb-4">
         <ArrowLeft size={14} /> Back to Stock Transfer
       </Link>
-      <h1 className="font-prata text-2xl text-ink mb-1">New Stock Transfer</h1>
+      <div className="flex items-center justify-between gap-4 mb-1">
+        <h1 className="font-prata text-2xl text-ink">New Stock Transfer</h1>
+        <RefreshButton onRefresh={() => loadProducts(true)} />
+      </div>
       <p className="text-zinc-500 text-sm mb-8">Moves items from Stores Stock to Showroom Stock.</p>
 
       <div className="nexora-card p-4 sm:p-6 mb-6">

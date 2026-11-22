@@ -4,9 +4,10 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   getShifts, getSalesByShift, reviewShift, adminCloseShift,
   getSales, getSaleItemsForSales, getSuppliers, getExpenses, addExpense, deleteExpense,
+  getExpenseCategories, addExpenseCategory, deleteExpenseCategory,
 } from "@/lib/firestore";
 import { ExpenseCategory, SALE_PAYMENT_METHOD_LABEL, salePaymentSplits } from "@/types";
-import { Search, Download, Wallet, X, TrendingUp, Receipt, Plus, Trash2, AlertTriangle } from "lucide-react";
+import { Search, Download, Wallet, X, TrendingUp, Receipt, Plus, Trash2, AlertTriangle, Settings2 } from "lucide-react";
 import Pagination from "@/components/ui/Pagination";
 import { rowsToCSV, downloadCSV } from "@/lib/csv";
 import ConfirmDialog from "@/components/ui/ConfirmDialog";
@@ -36,12 +37,10 @@ const EXPENSE_CATEGORIES: { value: ExpenseCategory; label: string }[] = [
 
 const EXPENSE_CATEGORY_LABEL: Record<string, string> = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.value, c.label]));
 
-// "Salaries" is excluded here — those expenses are only ever auto-created
-// by issueSalaryPayment() on the Salary page (linked to a SalaryPayment
-// doc), so it shouldn't be pickable when manually adding an expense here.
-// It still appears in EXPENSE_CATEGORIES above for the filter dropdown and
-// labeling existing records.
-const ADD_EXPENSE_CATEGORIES = EXPENSE_CATEGORIES.filter((c) => c.value !== "salaries");
+// Note: "Salaries" is excluded from the Add Expense picker (see
+// addableCategories) — those expenses are only ever auto-created by
+// issueSalaryPayment() on the Salary page. It still appears in the filter
+// dropdown and for labeling existing records.
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -443,6 +442,62 @@ export default function FinancePage() {
   const [expenseError, setExpenseError] = useState("");
   const [deleteExpenseId, setDeleteExpenseId] = useState<string | null>(null);
   const [deletingExpense, setDeletingExpense] = useState(false);
+
+  // Custom (user-added) expense categories, merged after the built-ins.
+  const [customCategories, setCustomCategories] = useState<{ id: string; name: string }[]>([]);
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [managingCategories, setManagingCategories] = useState(false);
+  const [deleteCategory, setDeleteCategory] = useState<{ id: string; name: string } | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState(false);
+
+  const handleDeleteCategory = async () => {
+    if (!deleteCategory) return;
+    setDeletingCategory(true);
+    try {
+      await deleteExpenseCategory(deleteCategory.id);
+      const removed = deleteCategory.name;
+      setCustomCategories((prev) => {
+        const next = prev.filter((c) => c.id !== deleteCategory.id);
+        if (next.length === 0) setManagingCategories(false);
+        return next;
+      });
+      if (newExpenseCategory === removed) setNewExpenseCategory("other");
+      if (expCategoryFilter === removed) setExpCategoryFilter("");
+      setDeleteCategory(null);
+    } catch (err: any) {
+      alert(err?.message || "Failed to delete category");
+    }
+    setDeletingCategory(false);
+  };
+
+  useEffect(() => {
+    if (!canView) return;
+    getExpenseCategories().then(setCustomCategories).catch(() => {});
+  }, [canView]);
+
+  const allCategories = useMemo(
+    () => [...EXPENSE_CATEGORIES, ...customCategories.map((c) => ({ value: c.name, label: c.name }))],
+    [customCategories]
+  );
+  const addableCategories = useMemo(() => allCategories.filter((c) => c.value !== "salaries"), [allCategories]);
+
+  const handleSaveCategory = async () => {
+    setSavingCategory(true);
+    setExpenseError("");
+    try {
+      const reserved = EXPENSE_CATEGORIES.flatMap((c) => [c.value, c.label]);
+      const created = await addExpenseCategory(newCategoryName, reserved);
+      setCustomCategories((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewExpenseCategory(created.name);
+      setNewCategoryName("");
+      setAddingCategory(false);
+    } catch (err: any) {
+      setExpenseError(err?.message || "Failed to add category");
+    }
+    setSavingCategory(false);
+  };
 
   // Paying an expense out of a cashier's till debits that shift's cash
   // drawer (via addExpense's shiftId link) so closeShift() doesn't read the
@@ -1068,7 +1123,7 @@ export default function FinancePage() {
             <input type="date" aria-label="To date" className="nexora-input w-auto" value={expToDate} min={expFromDate || undefined} onChange={(e) => setExpToDate(e.target.value)} />
             <select className="nexora-input w-auto" value={expCategoryFilter} onChange={(e) => setExpCategoryFilter(e.target.value)}>
               <option value="">All categories</option>
-              {EXPENSE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              {allCategories.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
             {expCategoryFilter && (
               <button onClick={() => setExpCategoryFilter("")} className="nexora-btn nexora-btn-ghost text-xs py-2">Clear</button>
@@ -1136,14 +1191,77 @@ export default function FinancePage() {
           <div className="bg-white rounded-xl w-full max-w-sm mx-4">
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
               <h2 className="font-prata text-base">Add Expense</h2>
-              <button onClick={() => { setShowAddExpense(false); setPaidFromDrawer(false); setNewExpenseShiftId(""); }}><X size={16} className="text-zinc-400" /></button>
+              <button onClick={() => { setShowAddExpense(false); setPaidFromDrawer(false); setNewExpenseShiftId(""); setManagingCategories(false); setAddingCategory(false); setNewCategoryName(""); }}><X size={16} className="text-zinc-400" /></button>
             </div>
             <div className="p-4 space-y-3">
               <div>
-                <label className="text-xs text-zinc-500 mb-1 block">Category</label>
-                <select className="nexora-input" value={newExpenseCategory} onChange={(e) => setNewExpenseCategory(e.target.value as ExpenseCategory)}>
-                  {ADD_EXPENSE_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-zinc-500 block">Category</label>
+                  {!addingCategory && !managingCategories && (
+                    <div className="flex items-center gap-3">
+                      {canDeleteExpense && customCategories.length > 0 && (
+                        <button type="button" onClick={() => { setManagingCategories(true); setExpenseError(""); }} className="text-xs text-zinc-500 hover:underline flex items-center gap-1">
+                          <Settings2 size={11} /> Manage
+                        </button>
+                      )}
+                      <button type="button" onClick={() => { setAddingCategory(true); setExpenseError(""); }} className="text-xs text-red-600 hover:underline flex items-center gap-1">
+                        <Plus size={11} /> New category
+                      </button>
+                    </div>
+                  )}
+                  {managingCategories && (
+                    <button type="button" onClick={() => setManagingCategories(false)} className="text-xs text-zinc-500 hover:underline">
+                      Done
+                    </button>
+                  )}
+                </div>
+                {managingCategories ? (
+                  <div className="border border-zinc-200 rounded-lg divide-y divide-zinc-100 max-h-52 overflow-y-auto">
+                    {customCategories.length === 0 ? (
+                      <p className="text-xs text-zinc-400 px-3 py-3">No custom categories yet.</p>
+                    ) : (
+                      customCategories.map((c) => (
+                        <div key={c.id} className="flex items-center justify-between px-3 py-2">
+                          <span className="text-sm text-ink">{c.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteCategory(c)}
+                            className="text-zinc-300 hover:text-red-500 transition-colors"
+                            aria-label={`Delete ${c.name}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    <p className="text-[11px] text-zinc-400 px-3 py-2">Built-in categories can't be removed. Deleting a category doesn't change past expenses.</p>
+                  </div>
+                ) : addingCategory ? (
+                  <div className="flex gap-2">
+                    <input
+                      autoFocus
+                      className="nexora-input"
+                      placeholder="e.g. Internet, Transport"
+                      maxLength={40}
+                      value={newCategoryName}
+                      onChange={(e) => setNewCategoryName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); handleSaveCategory(); }
+                        if (e.key === "Escape") { setAddingCategory(false); setNewCategoryName(""); }
+                      }}
+                    />
+                    <button type="button" onClick={handleSaveCategory} disabled={savingCategory || !newCategoryName.trim()} className="nexora-btn nexora-btn-primary text-xs disabled:opacity-50">
+                      {savingCategory ? "…" : "Save"}
+                    </button>
+                    <button type="button" onClick={() => { setAddingCategory(false); setNewCategoryName(""); }} className="nexora-btn nexora-btn-ghost text-xs">
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <select className="nexora-input" value={newExpenseCategory} onChange={(e) => setNewExpenseCategory(e.target.value as ExpenseCategory)}>
+                    {addableCategories.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="text-xs text-zinc-500 mb-1 block">Amount</label>
@@ -1200,6 +1318,15 @@ export default function FinancePage() {
         loading={deletingExpense}
         onConfirm={handleDeleteExpense}
         onCancel={() => setDeleteExpenseId(null)}
+      />
+
+      <ConfirmDialog
+        open={!!deleteCategory}
+        title="Delete category?"
+        message={`"${deleteCategory?.name ?? ""}" will be removed from the category list. Existing expenses in this category keep their label.`}
+        loading={deletingCategory}
+        onConfirm={handleDeleteCategory}
+        onCancel={() => setDeleteCategory(null)}
       />
     </div>
   );
