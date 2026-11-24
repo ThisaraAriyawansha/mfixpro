@@ -7,6 +7,12 @@ export interface FieldChange {
   after: any;
 }
 
+function normalizeEmpty(v: any) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "string" && v.trim() === "") return null;
+  return v;
+}
+
 // Shallow diff restricted to an explicit allowlist — callers only ever pass
 // the fields they intend to let an Admin edit, so a locked field (quantities,
 // serials, financial totals) can never accidentally slip into a change set.
@@ -18,8 +24,10 @@ export function diffFields(
   const changes: FieldChange[] = [];
   for (const field of allowedFields) {
     if (!(field in patch)) continue;
-    const b = before[field] ?? null;
-    const a = patch[field] ?? null;
+    // A blank form input sends "" for a field that was never set, which
+    // isn't a real change — treat ""/undefined/null as the same empty value.
+    const b = normalizeEmpty(before[field]);
+    const a = normalizeEmpty(patch[field]);
     if (JSON.stringify(b) !== JSON.stringify(a)) changes.push({ field, before: b, after: a });
   }
   return changes;

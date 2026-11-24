@@ -14,6 +14,7 @@ export type PermissionKey =
   | "dashboard.view"
   | "sales.view"
   | "sales.editWarranty"
+  | "sales.sellBelowMinPrice"
   | "grn.create"
   | "grn.edit"
   | "grn.view"
@@ -102,6 +103,10 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
   // `.view` key, so it defaults false for every non-Admin role — Admin/Super
   // Admin get it, others only if granted from Settings > Team.
   { key: "sales.editWarranty", label: "Edit product warranty on a sale", module: "POS / Sales", ruleEnforced: false },
+  // UI-only: lets a user checkout a product below its optional
+  // minSellingPrice (after a warning). Without it the POS blocks the sale.
+  // Defaults false for non-Admin roles; Admin/Super Admin always have it.
+  { key: "sales.sellBelowMinPrice", label: "Sell below product minimum price", module: "POS / Sales", ruleEnforced: false },
 
   { key: "grn.view", label: "View GRN", module: "GRN", ruleEnforced: true },
   { key: "grn.create", label: "Create GRN", module: "GRN", ruleEnforced: true },

@@ -76,6 +76,10 @@ export interface Product {
   sku: string;
   barcode?: string;
   sellingPrice: number;
+  /** Optional floor for the net per-unit price at POS (after discounts).
+   *  Users without `sales.sellBelowMinPrice` can't checkout below it;
+   *  those with it get a warning and may override. Absent = no limit. */
+  minSellingPrice?: number;
   totalStock: number;
   storesStock: number;
   showroomStock: number;

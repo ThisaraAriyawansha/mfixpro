@@ -212,6 +212,7 @@ export async function addProduct(data: {
   sku: string;
   barcode?: string;
   sellingPrice: number;
+  minSellingPrice?: number;
   totalStock: number;
   description?: string;
   warrantyMonths?: number;
@@ -735,6 +736,82 @@ function allocateFromUnits(batchIds: string[], batchSnaps: any[], units: { unitI
   return { consumed, costPrice };
 }
 
+const INVOICE_NO_PATTERN = /^INV-(\d+)$/i;
+
+function formatInvoiceNo(n: number) {
+  return `INV-${String(n).padStart(5, "0")}`;
+}
+
+// Accepts "INV-00001", "00001" or "1" and returns the canonical INV-00001
+// form plus its sequence number, or null if it isn't a valid number.
+export function parseInvoiceNo(input: string): { invoiceNo: string; seq: number } | null {
+  const t = input.trim().toUpperCase();
+  const m = t.match(INVOICE_NO_PATTERN) || t.match(/^(\d+)$/);
+  if (!m) return null;
+  const seq = Number(m[1]);
+  if (!Number.isFinite(seq) || seq < 1) return null;
+  return { invoiceNo: formatInvoiceNo(seq), seq };
+}
+
+// First sequence number after the counter that no existing sale uses.
+// Checks in pages of 30 (Firestore's `in` limit).
+async function findFreeInvoiceSeq() {
+  const counterDoc = await getDoc(doc(db, "counters", "invoice"));
+  let seq = (counterDoc.exists() ? (counterDoc.data().value as number) : 0) + 1;
+  for (let page = 0; page < 10; page++) {
+    const candidates = Array.from({ length: 30 }, (_, i) => formatInvoiceNo(seq + i));
+    const snap = await getDocs(query(collection(db, "sales"), where("invoiceNo", "in", candidates)));
+    const used = new Set(snap.docs.map((d) => (d.data().invoiceNo as string).toUpperCase()));
+    const free = candidates.findIndex((c) => !used.has(c));
+    if (free !== -1) return seq + free;
+    seq += 30;
+  }
+  return seq;
+}
+
+// Preview of the next auto invoice number (counter + 1, skipping any
+// number already taken).
+export async function getNextInvoiceNo() {
+  return formatInvoiceNo(await findFreeInvoiceSeq());
+}
+
+// Renumber a bill (e.g. to start the sequence at INV-00001). The invoice
+// counter is reset to this number, so the next new bill gets the one after
+// it — numbers already in use are skipped automatically by createSale.
+export async function adminRenumberSale(
+  saleId: string,
+  newInvoiceNoInput: string,
+  performedBy: { uid: string; name: string }
+) {
+  const parsed = parseInvoiceNo(newInvoiceNoInput);
+  if (!parsed) throw new Error("Enter a valid invoice number, e.g. INV-00001 or 1.");
+  const { invoiceNo, seq } = parsed;
+
+  const dup = await getDocs(query(collection(db, "sales"), where("invoiceNo", "==", invoiceNo), limit(2)));
+  if (dup.docs.some((d) => d.id !== saleId)) throw new Error(`Invoice number ${invoiceNo} is already in use.`);
+
+  return runTransaction(db, async (tx) => {
+    const ref = doc(db, "sales", saleId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("Bill not found");
+    const before = snap.data() as any;
+    if (before.status === "cancelled") throw new Error("Cannot edit a cancelled bill");
+    if (before.invoiceNo === invoiceNo) return { invoiceNo };
+
+    tx.update(ref, { invoiceNo, updatedAt: serverTimestamp() });
+    tx.set(doc(db, "counters", "invoice"), { value: seq });
+
+    writeAuditLog(tx, {
+      collectionName: "sales",
+      docId: saleId,
+      label: invoiceNo,
+      changes: [{ field: "invoiceNo", before: before.invoiceNo, after: invoiceNo }],
+      performedBy,
+    });
+    return { invoiceNo };
+  });
+}
+
 export async function createSale(data: SaleData) {
   // POS only ever sells from Showroom Stock — Stores Stock has to be
   // Transferred to Showroom first. Discover candidate batch ids up front
@@ -746,6 +823,11 @@ export async function createSale(data: SaleData) {
         : getCandidateBatchIds(item.productId, "showroom", item.batchId)
     )
   );
+
+  // After an invoice is renumbered, the counter can sit below numbers that
+  // are already taken. Find the first free number up front (queries can't
+  // run inside a transaction) and never hand out anything below it.
+  const minInvoiceSeq = await findFreeInvoiceSeq();
 
   return runTransaction(db, async (tx) => {
     // ---- Reads (a transaction's reads must all happen before its writes) ----
@@ -821,9 +903,9 @@ export async function createSale(data: SaleData) {
 
     // ---- Writes ----
     const current = counterDoc.exists() ? (counterDoc.data().value as number) : 0;
-    const next = current + 1;
+    const next = Math.max(current + 1, minInvoiceSeq);
     tx.set(counterRef, { value: next });
-    const invoiceNo = `INV-${String(next).padStart(5, "0")}`;
+    const invoiceNo = formatInvoiceNo(next);
 
     const saleRef = doc(collection(db, "sales"));
     const saleData = Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined));

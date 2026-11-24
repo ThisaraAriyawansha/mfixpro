@@ -5,6 +5,7 @@ import {
   getBrands, getMainCategories, getSubCategories, addBatch, getAllBatches, updateBatch, getAllUnits,
   getUnitsByBatch, updateUnitSerial, deleteUnit, addUnitsToBatch,
 } from "@/lib/firestore";
+import { deleteField } from "firebase/firestore";
 import { useAuth } from "@/hooks/useAuth";
 import { Product, Brand, MainCategory, SubCategory } from "@/types";
 import { Plus, Search, Edit2, Trash2, Package, ChevronDown, X, Layers, Hash, Check } from "lucide-react";
@@ -19,7 +20,7 @@ const PAGE_SIZE = 10;
 const DRAFT = "products";
 const EMPTY_FORM = {
   name: "", brandId: "", mainCategoryId: "", subCategoryId: "",
-  sku: "", barcode: "", sellingPrice: "", costPrice: "", totalStock: "0", lowStockAlert: "5",
+  sku: "", barcode: "", sellingPrice: "", minSellingPrice: "", costPrice: "", totalStock: "0", lowStockAlert: "5",
   description: "", warrantyMonths: "0", trackSerial: false,
   // Where the initial stock lands (add only). With "both", totalStock is the
   // Stores qty and showroomQty the Showroom qty.
@@ -159,7 +160,9 @@ export default function ProductsPage() {
     setForm({
       name: p.name, brandId: p.brandId, mainCategoryId: p.mainCategoryId,
       subCategoryId: p.subCategoryId, sku: p.sku, barcode: p.barcode || "",
-      sellingPrice: String(p.sellingPrice), costPrice: "", totalStock: String(p.totalStock),
+      sellingPrice: String(p.sellingPrice),
+      minSellingPrice: p.minSellingPrice != null ? String(p.minSellingPrice) : "",
+      costPrice: "", totalStock: String(p.totalStock),
       lowStockAlert: String(p.lowStockAlert), description: p.description || "",
       warrantyMonths: String(p.warrantyMonths || 0), trackSerial: !!p.trackSerial,
       stockLocation: "stores", showroomQty: "0",
@@ -334,12 +337,23 @@ export default function ProductsPage() {
         warrantyMonths: Number(form.warrantyMonths),
         trackSerial: form.trackSerial,
       };
+      // Optional POS floor price — blank means "no limit". Firestore rejects
+      // undefined, so omit it on create and deleteField() it on edit.
+      const minPriceStr = String(form.minSellingPrice ?? "").trim();
+      const minSellingPrice = minPriceStr === "" ? null : Number(minPriceStr);
       if (editingProduct) {
-        await updateProduct(editingProduct.id, data);
+        await updateProduct(editingProduct.id, {
+          ...data,
+          minSellingPrice: minSellingPrice != null ? minSellingPrice : deleteField(),
+        });
       } else {
         // Seed stock at 0 — addBatch below increments it from there, so
         // pre-filling it here would double-count the initial quantity.
-        const productRef = await addProduct({ ...data, totalStock: 0 } as any);
+        const productRef = await addProduct({
+          ...data,
+          ...(minSellingPrice != null ? { minSellingPrice } : {}),
+          totalStock: 0,
+        } as any);
         // (addProduct seeds storesStock/showroomStock at 0 too.)
         if (!form.trackSerial) {
           const { storesQty, showroomQty } = initialQtys;
@@ -674,6 +688,19 @@ export default function ProductsPage() {
                 <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Selling Price (Rs.)</label>
                 <input type="number" className="nexora-input" required value={form.sellingPrice} onChange={e => setForm({...form, sellingPrice: e.target.value})} />
               </div>
+              <div>
+                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5 whitespace-nowrap truncate" title="Optional — lowest price this can be sold for at POS after discounts">Min. Price (Rs.)</label>
+                <input
+                  type="number"
+                  className="nexora-input"
+                  min={0}
+                  max={form.sellingPrice || undefined}
+                  value={form.minSellingPrice ?? ""}
+                  onChange={e => setForm({...form, minSellingPrice: e.target.value})}
+                  placeholder="Optional"
+                  title="Lowest price this can be sold for at POS after discounts"
+                />
+              </div>
               {!editingProduct && !form.trackSerial && (
                 <div>
                   <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Cost Price (Rs.)</label>
@@ -683,10 +710,15 @@ export default function ProductsPage() {
               {(form.trackSerial || editingProduct) && (
                 <div>
                   <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">Initial Stock</label>
-                  <div className="nexora-input flex items-center text-zinc-400 text-sm">
-                    {editingProduct
-                      ? `${editingProduct.totalStock} units — change via batches / Stock Out`
-                      : "0 — add via batches"}
+                  <div
+                    className="nexora-input flex items-center text-zinc-400 text-sm whitespace-nowrap overflow-hidden"
+                    title={editingProduct ? "Change via batches / Stock Out" : "Add via batches"}
+                  >
+                    <span className="truncate">
+                      {editingProduct
+                        ? `${editingProduct.totalStock} units — change via batches / Stock Out`
+                        : "0 — add via batches"}
+                    </span>
                   </div>
                 </div>
               )}

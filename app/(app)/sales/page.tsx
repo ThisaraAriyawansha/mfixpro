@@ -88,6 +88,8 @@ export default function SalesPage() {
 
   // Per-sale warranty override on a cart line (Admin / granted users only).
   const canEditWarranty = can("sales.editWarranty");
+  // Admin/Super Admin always; others only if granted from Settings > Team.
+  const canSellBelowMin = can("sales.sellBelowMinPrice");
   const [warrantyModal, setWarrantyModal] = useState<{ tempId: string; months: string; note: string; error: string } | null>(null);
 
   const [downloadingBill, setDownloadingBill] = useState(false);
@@ -655,11 +657,34 @@ export default function SalesPage() {
     else toggleMethod(value);
   };
 
+  // Product minimum-price check. Compared on base prices (before any
+  // Card/KokoPay surcharge): the line's unit price minus its per-unit
+  // discount, minus that line's proportional share of the bill-level
+  // discount — so moving the discount to the bill total can't sidestep it.
+  // Products with no minSellingPrice set are skipped entirely.
+  const billDiscountRatio = baseSubtotal > 0 ? Math.min(1, discount / baseSubtotal) : 0;
+  const belowMinItems = cart.flatMap(i => {
+    const min = products.find(p => p.id === i.productId)?.minSellingPrice;
+    if (min == null || !(min > 0)) return [];
+    const netUnit = Math.round((i.unitPrice - i.discount) * (1 - billDiscountRatio));
+    return netUnit < min ? [{ tempId: i.tempId, name: i.productName, netUnit, min }] : [];
+  });
+
   const handleCheckout = async () => {
     if (!hasBillLines) return;
     if (!currentShift) {
       alert("No open shift — open a shift before selling.");
       return;
+    }
+    if (belowMinItems.length > 0) {
+      const lines = belowMinItems
+        .map(b => `• ${b.name}: Rs. ${b.netUnit.toLocaleString()} (minimum Rs. ${b.min.toLocaleString()})`)
+        .join("\n");
+      if (!canSellBelowMin) {
+        alert(`Can't complete this sale — these items are below their minimum selling price:\n\n${lines}\n\nReduce the discount or ask an Admin.`);
+        return;
+      }
+      if (!confirm(`Warning: these items are below their minimum selling price:\n\n${lines}\n\nSell anyway?`)) return;
     }
     setProcessing(true);
     try {
@@ -1155,6 +1180,16 @@ export default function SalesPage() {
                     />
                     <span className="text-sm font-medium text-ink w-20 text-right">Rs. {displayLineTotal.toLocaleString()}</span>
                   </div>
+                  {(() => {
+                    const below = belowMinItems.find(b => b.tempId === item.tempId);
+                    if (!below) return null;
+                    return (
+                      <p className={`text-[11px] mt-1 ${canSellBelowMin ? "text-amber-600" : "text-red-600"}`}>
+                        Below minimum price (Rs. {below.min.toLocaleString()}/unit) — net Rs. {below.netUnit.toLocaleString()}/unit
+                        {canSellBelowMin ? ". You can still sell after confirming." : ". Not allowed — reduce the discount."}
+                      </p>
+                    );
+                  })()}
                   {chargeMultiplier > 1 && (
                     <p className="text-[11px] text-zinc-400 mt-1 text-right">Rs. {item.unitPrice.toLocaleString()}/unit + {isSplitCardCharge ? "Card charge share" : `${chargePercent}% ${chargeMethodLabel}`} = Rs. {displayUnitPrice.toLocaleString()}</p>
                   )}

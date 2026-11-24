@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { getSale, getSales, getSalesStats, cancelSale, adminUpdateSale } from "@/lib/firestore";
+import { getSale, getSales, getSalesStats, cancelSale, adminUpdateSale, adminRenumberSale, parseInvoiceNo } from "@/lib/firestore";
 import { Search, Printer, Eye, X, Ban, Download, Mail, Pencil } from "lucide-react";
 import BillPrint from "@/components/pos/BillPrint";
 import { useReactToPrint } from "react-to-print";
@@ -76,6 +76,8 @@ export default function BillsPage() {
   const [editingBill, setEditingBill] = useState(false);
   const [billEditForm, setBillEditForm] = useState({ customerName: "", customerPhone: "", customerEmail: "", note: "", paymentMethod: "cash" as SalePaymentMethod });
   const [savingBillEdit, setSavingBillEdit] = useState(false);
+  const [billInvoiceNo, setBillInvoiceNo] = useState("");
+  const [billEditError, setBillEditError] = useState("");
 
   const handleDownloadBill = async () => {
     if (!printRef.current || downloadingBill) return;
@@ -164,22 +166,32 @@ export default function BillsPage() {
       note: viewSale.note || "",
       paymentMethod: viewSale.paymentMethod || "cash",
     });
+    setBillInvoiceNo(viewSale.invoiceNo || "");
+    setBillEditError("");
     setEditingBill(true);
   };
 
   const handleSaveBillEdit = async () => {
     if (!viewSale) return;
+    const performedBy = { uid: user!.uid, name: userDisplayName || user?.email || "Admin" };
+    const parsedNo = parseInvoiceNo(billInvoiceNo);
+    if (!parsedNo) {
+      setBillEditError("Enter a valid invoice number, e.g. INV-00001 or 1.");
+      return;
+    }
     setSavingBillEdit(true);
+    setBillEditError("");
     try {
-      await adminUpdateSale(
-        viewSale.id,
-        billEditForm,
-        { uid: user!.uid, name: userDisplayName || user?.email || "Admin" }
-      );
+      if (parsedNo.invoiceNo !== viewSale.invoiceNo) {
+        await adminRenumberSale(viewSale.id, parsedNo.invoiceNo, performedBy);
+      }
+      await adminUpdateSale(viewSale.id, billEditForm, performedBy);
       await loadSales();
       const refreshed = await getSale(viewSale.id);
       setViewSale(refreshed as Sale | null);
       setEditingBill(false);
+    } catch (err: any) {
+      setBillEditError(err?.message || "Failed to save bill");
     } finally {
       setSavingBillEdit(false);
     }
@@ -379,6 +391,19 @@ export default function BillsPage() {
 
             {editingBill && (
               <div className="mx-6 mt-4 px-4 py-3 rounded-lg bg-zinc-50 border border-zinc-200 space-y-2">
+                <div>
+                  <label className="text-xs text-zinc-500 block mb-1">Invoice number</label>
+                  <input className="nexora-input text-sm w-full sm:w-1/2" placeholder="INV-00001" value={billInvoiceNo} onChange={(e) => setBillInvoiceNo(e.target.value)} />
+                  {(() => {
+                    const p = parseInvoiceNo(billInvoiceNo);
+                    if (!p || p.invoiceNo === viewSale?.invoiceNo) return null;
+                    return (
+                      <p className="text-xs text-amber-700 mt-1">
+                        This bill becomes {p.invoiceNo}. The next new bill will be {`INV-${String(p.seq + 1).padStart(5, "0")}`} (numbers already in use are skipped).
+                      </p>
+                    );
+                  })()}
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input className="nexora-input text-sm" placeholder="Customer name" value={billEditForm.customerName} onChange={(e) => setBillEditForm({ ...billEditForm, customerName: e.target.value })} />
                   <input className="nexora-input text-sm" placeholder="Customer phone" value={billEditForm.customerPhone} onChange={(e) => setBillEditForm({ ...billEditForm, customerPhone: e.target.value })} />
@@ -394,6 +419,7 @@ export default function BillsPage() {
                   )}
                 </div>
                 <textarea className="nexora-input text-sm w-full" rows={2} placeholder="Note" value={billEditForm.note} onChange={(e) => setBillEditForm({ ...billEditForm, note: e.target.value })} />
+                {billEditError && <p className="text-xs text-red-600">{billEditError}</p>}
                 <div className="flex gap-2">
                   <button onClick={handleSaveBillEdit} disabled={savingBillEdit} className="nexora-btn nexora-btn-primary text-xs py-1.5 disabled:opacity-60">
                     {savingBillEdit ? "Saving…" : "Save"}

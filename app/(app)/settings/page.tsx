@@ -822,13 +822,15 @@ export default function SettingsPage() {
 
       {/* Edit User modal */}
       {editingUser && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 shrink-0">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-3 sm:p-6">
+          <div className="bg-white rounded-xl w-full max-w-lg md:max-w-3xl lg:max-w-5xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-zinc-100 shrink-0">
               <h2 className="font-prata text-lg">Edit User</h2>
               <button onClick={() => setEditingUser(null)}><X size={16} className="text-zinc-400" /></button>
             </div>
-            <form onSubmit={handleEditUser} className="px-6 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
+            <form onSubmit={handleEditUser} className="flex flex-col flex-1 min-h-0">
+            <div className="px-4 sm:px-6 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-zinc-500 mb-1 block">Full Name</label>
                 <input
@@ -857,22 +859,24 @@ export default function SettingsPage() {
                   <option value="Staff">Staff</option>
                 </select>
               </div>
+              </div>
               {canManagePermissionsFor(userRole ?? "", editForm.role) && (
-                <div className="border border-zinc-100 rounded-lg p-3">
-                  <p className="text-xs text-zinc-500 mb-2">
+                <div className="border border-zinc-100 rounded-lg p-3 sm:p-4">
+                  <p className="text-xs text-zinc-500 mb-3">
                     Permissions for this {editForm.role} — untick anything they shouldn't be able to do.
                   </p>
-                  <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                  <div className="columns-1 sm:columns-2 lg:columns-3 gap-6">
                     {PERMISSION_MODULES.map(({ module, keys }) => (
-                      <div key={module}>
+                      <div key={module} className="break-inside-avoid mb-4">
                         <p className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider mb-1">{module}</p>
                         <div className="space-y-1">
                           {keys.map((key) => {
                             const def = PERMISSION_CATALOG.find((p) => p.key === key)!;
                             return (
-                              <label key={key} className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+                              <label key={key} className="flex items-start gap-2 text-sm text-ink cursor-pointer">
                                 <input
                                   type="checkbox"
+                                  className="mt-0.5 shrink-0"
                                   checked={!!editForm.permissions[key]}
                                   onChange={(e) =>
                                     setEditForm((prev) => ({
@@ -897,6 +901,8 @@ export default function SettingsPage() {
                   {editMsg.text}
                 </p>
               )}
+            </div>
+            <div className="px-4 sm:px-6 py-3 border-t border-zinc-100 shrink-0">
               <button
                 type="submit"
                 disabled={savingEdit}
@@ -904,6 +910,7 @@ export default function SettingsPage() {
               >
                 {savingEdit ? "Saving..." : "Save Changes"}
               </button>
+            </div>
             </form>
           </div>
         </div>
