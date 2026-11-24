@@ -299,6 +299,26 @@ function formatDate(ts: any, opts?: Intl.DateTimeFormatOptions) {
   return d.toLocaleDateString("en-US", opts || { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// Read-only label/value pair used in the job detail popup.
+function DetailField({ label, value, className = "" }: { label: string; value?: React.ReactNode; className?: string }) {
+  const empty = value === undefined || value === null || value === "";
+  return (
+    <div className={`min-w-0 ${className}`}>
+      <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-sm font-medium break-words whitespace-pre-line">{empty ? "—" : value}</p>
+    </div>
+  );
+}
+
+function DetailSection({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-zinc-200 bg-white p-4 sm:p-5 ${className}`}>
+      <p className="text-xs font-semibold text-ink uppercase tracking-wider mb-4 pb-2 border-b border-zinc-100">{title}</p>
+      {children}
+    </div>
+  );
+}
+
 function csvEscape(value: any) {
   const s = value === null || value === undefined ? "" : String(value);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -1253,12 +1273,25 @@ export default function JobsPage() {
 
       {/* Job detail modal */}
       {viewJob && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="px-6 py-4 border-b border-zinc-100 sticky top-0 z-20 bg-white">
-              <div className="flex items-center justify-between">
-                <h2 className="font-prata text-lg">{viewJob.jobNo}</h2>
-                <button onClick={closeJob} className="text-zinc-400 hover:text-ink">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-zinc-50 rounded-t-2xl sm:rounded-xl w-full max-w-2xl lg:max-w-5xl xl:max-w-6xl max-h-[95vh] sm:max-h-[92vh] overflow-y-auto">
+            <div className="px-4 sm:px-6 py-4 border-b border-zinc-200 sticky top-0 z-20 bg-white">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="font-prata text-lg">{viewJob.jobNo}</h2>
+                    <span className={`badge ${STATUS_BADGE[viewJob.status as JobStatus] ?? "badge-default"}`}>
+                      {STATUS_LABEL[viewJob.status as JobStatus] ?? viewJob.status}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5 truncate">
+                    {viewJob.customerName}
+                    {" · "}
+                    {viewJob.deviceType === "Other" ? viewJob.deviceTypeOther || "Other" : viewJob.deviceType}
+                    {[viewJob.brand, viewJob.model].filter(Boolean).length ? ` · ${[viewJob.brand, viewJob.model].filter(Boolean).join(" ")}` : ""}
+                  </p>
+                </div>
+                <button onClick={closeJob} className="text-zinc-400 hover:text-ink shrink-0 p-1">
                   <X size={18} />
                 </button>
               </div>
@@ -1306,75 +1339,127 @@ export default function JobsPage() {
               </div>
             )}
 
-            <div className="px-6 py-4 space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Customer</p>
-                  <p className="text-sm font-medium truncate">{viewJob.customerName}</p>
-                  <p className="text-xs text-zinc-500">{[viewJob.customerPhone, viewJob.customerPhone2].filter(Boolean).join(" / ")}</p>
+            <div className="px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-5 items-start">
+             {/* Left column — job intake details */}
+             <div className="lg:col-span-3 space-y-4 min-w-0">
+              {/* Job info */}
+              <DetailSection title="Job Information">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <DetailField label="Received Date" value={viewJob.createdAt ? formatDate(viewJob.createdAt) : ""} />
+                  <DetailField
+                    label="Expected Delivery"
+                    value={viewJob.expectedDeliveryDate ? formatDate(viewJob.expectedDeliveryDate, { day: "numeric", month: "short", year: "numeric" }) : ""}
+                  />
+                  <DetailField label="Technician" value={viewJob.assignedTechnicianName || "Unassigned"} />
+                  <DetailField label="Received By" value={viewJob.receivedByName?.includes("@") ? "Staff" : viewJob.receivedByName} />
+                  {viewJob.dateReturned && <DetailField label="Date Returned" value={formatDate(viewJob.dateReturned)} />}
                 </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Device</p>
-                  <p className="text-sm font-medium">{viewJob.deviceType === "Other" ? viewJob.deviceTypeOther : viewJob.deviceType}</p>
-                  <p className="text-xs text-zinc-500">{[viewJob.brand, viewJob.model].filter(Boolean).join(" · ") || "—"}</p>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Current Status</p>
-                  <span className={`badge ${STATUS_BADGE[viewJob.status as JobStatus] ?? "badge-default"}`}>
-                    {STATUS_LABEL[viewJob.status as JobStatus] ?? viewJob.status}
-                  </span>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Technician</p>
-                  <p className="text-sm font-medium">{viewJob.assignedTechnicianName || "Unassigned"}</p>
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Received By</p>
-                  <p className="text-sm font-medium">{viewJob.receivedByName?.includes("@") ? "Staff" : viewJob.receivedByName}</p>
-                </div>
-              </div>
+              </DetailSection>
 
-              {viewJob.parts && viewJob.parts.length > 0 && (
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Device Parts</p>
-                  <div className="space-y-1.5">
-                    {viewJob.parts.map((p: JobDevicePart) => (
-                      <div key={p.id} className="flex flex-wrap items-center justify-between text-sm gap-x-3">
-                        <span className="min-w-0">
-                          <span className="font-medium">{p.name}</span>
-                          {p.spec ? <span className="text-zinc-500"> — {p.spec}</span> : null}
-                        </span>
-                        <span className="text-xs text-zinc-500 shrink-0">{p.serialNo ? `S/N: ${p.serialNo}` : "—"}</span>
-                      </div>
-                    ))}
+              {/* Customer details */}
+              <DetailSection title="Customer Details">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <DetailField label="Name" value={viewJob.customerName} />
+                  <DetailField label="Company" value={viewJob.customerCompany} />
+                  <DetailField label="Email" value={viewJob.customerEmail} />
+                  <DetailField label="Phone" value={viewJob.customerPhone} />
+                  <DetailField label="Phone 2" value={viewJob.customerPhone2} />
+                  <DetailField label="City" value={viewJob.customerCity} />
+                  <DetailField label="Address" value={viewJob.customerAddress} className="col-span-2 md:col-span-3" />
+                </div>
+              </DetailSection>
+
+              {/* Device details */}
+              <DetailSection title="Device Details">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <DetailField label="Device Type" value={viewJob.deviceType === "Other" ? viewJob.deviceTypeOther || "Other" : viewJob.deviceType} />
+                  <DetailField label="Brand" value={viewJob.brand} />
+                  <DetailField label="Model" value={viewJob.model} />
+                  <DetailField label="Serial No" value={viewJob.serialNo} />
+                  <DetailField label="Color" value={viewJob.color} />
+                </div>
+                {viewJob.parts && viewJob.parts.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-zinc-100">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Device Parts</p>
+                    <div className="rounded-lg border border-zinc-100 divide-y divide-zinc-100">
+                      {viewJob.parts.map((p: JobDevicePart) => (
+                        <div key={p.id} className="flex flex-wrap items-center justify-between text-sm gap-x-3 gap-y-0.5 px-3 py-2">
+                          <span className="min-w-0">
+                            <span className="font-medium">{p.name}</span>
+                            {p.spec ? <span className="text-zinc-500"> — {p.spec}</span> : null}
+                          </span>
+                          <span className="text-xs text-zinc-500 shrink-0">{p.serialNo ? `S/N: ${p.serialNo}` : "—"}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </DetailSection>
 
-              <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Fault / Complaint</p>
-                <p className="text-sm">{viewJob.faultDescription}</p>
-              </div>
+              {/* Fault, accessories, condition, notes */}
+              <DetailSection title="Fault & Condition">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <DetailField label="Fault / Complaint" value={viewJob.faultDescription} className="sm:col-span-2" />
+                  <div className="min-w-0">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Accessories Received</p>
+                    {(viewJob.accessories?.length || viewJob.accessoriesOther) ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(viewJob.accessories || []).map((a: string) => (
+                          <span key={a} className="badge badge-default">{a}</span>
+                        ))}
+                        {viewJob.accessoriesOther ? <span className="badge badge-default">{viewJob.accessoriesOther}</span> : null}
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium">—</p>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Physical Condition</p>
+                    {viewJob.physicalCondition?.length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {viewJob.physicalCondition.map((c: string) => (
+                          <span key={c} className="badge badge-default">{c}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium">—</p>
+                    )}
+                  </div>
+                  <DetailField label="Special Notes" value={viewJob.specialNotes} className="sm:col-span-2" />
+                </div>
+              </DetailSection>
+             </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-zinc-100 pt-4">
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Estimated Cost</p>
-                  <p className="text-sm font-medium">Rs. {viewJob.estimatedCost?.toLocaleString()}</p>
+             {/* Right column — money, status update, history */}
+             <div className="lg:col-span-2 space-y-4 min-w-0">
+              <DetailSection title="Payment Summary">
+                <div className="space-y-2.5 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-zinc-500">Estimated Cost</span>
+                    <span className="font-medium">Rs. {(viewJob.estimatedCost ?? 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-zinc-500">Advance Paid</span>
+                    <span className="font-medium">Rs. {(viewJob.advancePaid ?? 0).toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between gap-3 pt-2.5 border-t border-zinc-100">
+                    <span className="text-zinc-500">Repair Cost</span>
+                    <span className="font-semibold">{viewJob.repairCost != null ? `Rs. ${viewJob.repairCost.toLocaleString()}` : "—"}</span>
+                  </div>
+                  {viewJob.repairCost != null && (
+                    <div className="flex justify-between gap-3">
+                      <span className="text-zinc-500">Balance Due</span>
+                      <span className="font-semibold text-red-600">
+                        Rs. {Math.max(0, viewJob.repairCost - (viewJob.advancePaid ?? 0)).toLocaleString()}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Advance Paid</p>
-                  <p className="text-sm font-medium">Rs. {viewJob.advancePaid?.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Repair Cost</p>
-                  <p className="text-sm font-medium">{viewJob.repairCost != null ? `Rs. ${viewJob.repairCost.toLocaleString()}` : "—"}</p>
-                </div>
-              </div>
+              </DetailSection>
 
               {/* Services & Charges (read-only, edited via Edit Job) */}
               {viewJob.services && viewJob.services.length > 0 && (
-                <div className="border-t border-zinc-100 pt-4">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Services & Charges</p>
+                <DetailSection title="Services & Charges">
                   <div className="space-y-1.5">
                     {viewJob.services.map((s: JobServiceItem) => (
                       <div key={s.id} className="flex items-center justify-between text-sm gap-3">
@@ -1394,13 +1479,12 @@ export default function JobsPage() {
                     <span className="text-zinc-500">Services Total</span>
                     <span className="font-medium">Rs. {jobServicesTotal(viewJob.services).toLocaleString()}</span>
                   </div>
-                </div>
+                </DetailSection>
               )}
 
               {/* Status update form */}
-              <div className="border-t border-zinc-100 pt-4">
-                <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Update Job Status</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <DetailSection title="Update Job Status">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
                   <select
                     className="nexora-input"
                     value={newStatus}
@@ -1441,15 +1525,14 @@ export default function JobsPage() {
                 <button
                   onClick={handleUpdateStatus}
                   disabled={statusUpdating}
-                  className="nexora-btn nexora-btn-primary text-sm mt-2 disabled:opacity-50"
+                  className="nexora-btn nexora-btn-primary text-sm mt-3 w-full sm:w-auto lg:w-full justify-center disabled:opacity-50"
                 >
                   {statusUpdating ? "Updating…" : "Save Update"}
                 </button>
-              </div>
+              </DetailSection>
 
               {/* Status history */}
-              <div className="border-t border-zinc-100 pt-4">
-                <p className="text-xs text-zinc-500 uppercase tracking-wider mb-3">Job History</p>
+              <DetailSection title="Job History">
                 <div>
                   {viewJob.statusHistory?.map((entry: any, i: number) => {
                     const isLast = i === viewJob.statusHistory.length - 1;
@@ -1474,7 +1557,8 @@ export default function JobsPage() {
                     );
                   })}
                 </div>
-              </div>
+              </DetailSection>
+             </div>
             </div>
           </div>
         </div>
