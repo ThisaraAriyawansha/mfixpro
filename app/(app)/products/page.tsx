@@ -561,6 +561,7 @@ export default function ProductsPage() {
                     </span>
                     <p className="text-xs text-zinc-400 mt-1">
                       Stores: {p.storesStock ?? 0} · Showroom: {p.showroomStock ?? 0}
+                      {(p.damagedStock ?? 0) > 0 && <span className="text-red-500"> · Damaged: {p.damagedStock}</span>}
                     </p>
                   </td>
                   <td className="px-4 py-3">
@@ -866,8 +867,8 @@ export default function ProductsPage() {
                         <div>
                           <p className="text-sm font-medium text-ink flex items-center gap-1.5">
                             Batch {i + 1}
-                            <span className={`badge text-[10px] ${(b.location ?? "stores") === "showroom" ? "badge-success" : "badge-default"}`}>
-                              {(b.location ?? "stores") === "showroom" ? "Showroom" : "Stores"}
+                            <span className={`badge text-[10px] ${(b.location ?? "stores") === "showroom" ? "badge-success" : b.location === "damaged" ? "badge-danger" : "badge-default"}`}>
+                              {(b.location ?? "stores") === "showroom" ? "Showroom" : b.location === "damaged" ? "Damaged" : "Stores"}
                             </span>
                           </p>
                           <p className="text-xs text-zinc-400">

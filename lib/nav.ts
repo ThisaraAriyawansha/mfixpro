@@ -3,7 +3,7 @@ import {
   Home, LayoutDashboard, Package, Layers, BookMarked,
   ShoppingCart, Receipt, Shield, Settings,
   Users, FileText, Wrench, PackagePlus, ArrowLeftRight, PackageMinus, History,
-  Truck, ShieldCheck, Wallet, Banknote, Boxes, Hammer,
+  Truck, ShieldCheck, Wallet, Banknote, Boxes, Hammer, Undo2, PackageX,
 } from "lucide-react";
 
 export type NavLink = { label: string; href: string; icon: React.ElementType; desc: string; permKey?: PermissionKey };
@@ -23,6 +23,7 @@ export const nav: NavEntry[] = [
       { label: "Bills", href: "/bills", icon: Receipt, desc: "Invoices & payments", permKey: "bills.view" },
       { label: "Quotations", href: "/quotations", icon: FileText, desc: "Price quotes", permKey: "quotations.view" },
       { label: "Warranty", href: "/warranty", icon: Shield, desc: "Warranty claims", permKey: "warranty.view" },
+      { label: "Customer Returns", href: "/customer-returns", icon: Undo2, desc: "Refunds & exchanges", permKey: "customerReturns.view" },
     ],
   },
   {
@@ -33,6 +34,7 @@ export const nav: NavEntry[] = [
       { label: "GRN", href: "/grn", icon: PackagePlus, desc: "Goods received", permKey: "grn.view" },
       { label: "Stock Transfer", href: "/stock-transfer", icon: ArrowLeftRight, desc: "Move stock", permKey: "stockTransfer.view" },
       { label: "Stock Out", href: "/stock-out", icon: PackageMinus, desc: "Remove stock", permKey: "stockOut.view" },
+      { label: "Supplier Returns", href: "/supplier-returns", icon: PackageX, desc: "Send back to supplier", permKey: "supplierReturns.view" },
       { label: "Stock Movements", href: "/stock-movements", icon: History, desc: "Stock history", permKey: "stockMovements.view" },
       { label: "Brands", href: "/brands", icon: BookMarked, desc: "Product brands", permKey: "brands.view" },
       { label: "Categories", href: "/categories", icon: Layers, desc: "Product categories", permKey: "categories.view" },

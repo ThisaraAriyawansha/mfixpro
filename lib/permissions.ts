@@ -25,6 +25,12 @@ export type PermissionKey =
   | "stockOut.edit"
   | "stockOut.view"
   | "stockMovements.view"
+  | "supplierReturns.view"
+  | "supplierReturns.create"
+  | "supplierReturns.settle"
+  | "customerReturns.view"
+  | "customerReturns.create"
+  | "customerReturns.settle"
   | "products.view"
   | "products.edit"
   | "products.delete"
@@ -122,6 +128,16 @@ export const PERMISSION_CATALOG: PermissionDef[] = [
 
   { key: "stockMovements.view", label: "View Stock Movements", module: "Stock Movements", ruleEnforced: true },
 
+  // Single-owner collections, same as Stock Out. Settling moves money
+  // (supplier balance / customer refund), so it's a separate key from create.
+  { key: "supplierReturns.view", label: "View Supplier Returns", module: "Supplier Returns", ruleEnforced: true },
+  { key: "supplierReturns.create", label: "Send stock back to supplier", module: "Supplier Returns", ruleEnforced: true },
+  { key: "supplierReturns.settle", label: "Settle supplier return (refund / replacement)", module: "Supplier Returns", ruleEnforced: true },
+
+  { key: "customerReturns.view", label: "View Customer Returns", module: "Customer Returns", ruleEnforced: true },
+  { key: "customerReturns.create", label: "Accept a customer return", module: "Customer Returns", ruleEnforced: true },
+  { key: "customerReturns.settle", label: "Settle customer return (refund / replacement)", module: "Customer Returns", ruleEnforced: true },
+
   { key: "products.view", label: "View Products", module: "Products", ruleEnforced: false },
   { key: "products.edit", label: "Edit product details", module: "Products", ruleEnforced: true },
   { key: "products.delete", label: "Delete product", module: "Products", ruleEnforced: true },
@@ -217,6 +233,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<EditableRole, Record<PermissionKey
     "grn.create",
     "stockTransfer.create",
     "stockOut.create",
+    "supplierReturns.create",
+    "customerReturns.create",
     "finance.view",
     "finance.reviewShift",
     "finance.addExpense",

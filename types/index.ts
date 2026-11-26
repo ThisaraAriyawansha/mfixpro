@@ -51,6 +51,12 @@ export interface SubCategory {
 
 export type StockLocation = "stores" | "showroom";
 
+// Where a batch/unit physically sits. "damaged" is a holding pool for
+// customer-returned faulty items — never sellable or transferable (every
+// sale/transfer/stock-out picks batches by exact location match), and not
+// counted in totalStock. Its only way out is a Supplier Return.
+export type InventoryLocation = StockLocation | "damaged";
+
 export interface ProductBatch {
   id: string;
   costPrice: number;
@@ -60,7 +66,7 @@ export interface ProductBatch {
   status: "active" | "depleted";
   receivedAt?: any;
   note?: string;
-  location: StockLocation;
+  location: InventoryLocation;
   sourceBatchId?: string | null;
 }
 
@@ -83,6 +89,8 @@ export interface Product {
   totalStock: number;
   storesStock: number;
   showroomStock: number;
+  /** Faulty customer returns waiting to go back to the supplier. Not part of totalStock. */
+  damagedStock?: number;
   lowStockAlert: number;
   description?: string;
   warrantyMonths?: number;
@@ -97,8 +105,8 @@ export interface ProductUnit {
   serialNumber: string;
   batchId: string;
   costPrice: number;
-  status: "in_stock" | "sold" | "issued";
-  location: StockLocation;
+  status: "in_stock" | "sold" | "issued" | "returned_supplier";
+  location: InventoryLocation;
   saleId?: string | null;
   soldAt?: any;
   stockOutId?: string | null;
@@ -537,6 +545,89 @@ export interface StockOutItem {
   qty: number;
   serialNumbers?: string[];
   costPrice: number;
+}
+
+// ─── RETURNS ──────────────────────────────────────────────────────────────────
+// Both return flows are two-step: create (stock moves immediately, status
+// "pending") → settle later (refund or replacement) once the outcome is known.
+
+export type ReturnStatus = "pending" | "settled" | "rejected";
+export type ReturnSettlementType = "refund" | "replacement";
+
+// Shop → Supplier: damaged stock sent back. Refund either reduces what we owe
+// the supplier ("credit") or is cash handed back to us ("cash"). Replacement
+// adds new stock at the same cost, leaving the supplier balance untouched.
+export type SupplierRefundMode = "credit" | "cash";
+
+export interface SupplierReturn {
+  id: string;
+  returnNo: string;
+  supplierId: string;
+  supplierName: string;
+  location: InventoryLocation;
+  totalValue: number;
+  status: ReturnStatus;
+  note?: string;
+  createdById: string;
+  createdByName: string;
+  createdAt?: any;
+  settlementType?: ReturnSettlementType;
+  refundMode?: SupplierRefundMode;
+  refundAmount?: number;
+  replacementLocation?: StockLocation;
+  settlementNote?: string;
+  settledByName?: string;
+  settledAt?: any;
+}
+
+export interface SupplierReturnItem {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  qty: number;
+  serialNumbers?: string[];
+  costPrice: number;
+  replacementSerials?: string[];
+}
+
+// Customer → Shop: an item from a sale comes back. "good" goes straight back
+// into Showroom stock; "damaged" goes to the damaged pool for a Supplier Return.
+export type ReturnCondition = "good" | "damaged";
+
+export interface CustomerReturn {
+  id: string;
+  returnNo: string;
+  saleId: string;
+  invoiceNo: string;
+  customerId?: string | null;
+  customerName: string;
+  customerPhone?: string;
+  totalValue: number;
+  status: ReturnStatus;
+  note?: string;
+  createdById: string;
+  createdByName: string;
+  createdAt?: any;
+  settlementType?: ReturnSettlementType;
+  refundAmount?: number;
+  refundMethod?: SalePaymentMethod;
+  settlementNote?: string;
+  settledByName?: string;
+  settledAt?: any;
+}
+
+export interface CustomerReturnItem {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  qty: number;
+  serialNumbers?: string[];
+  unitPrice: number;
+  costPrice: number;
+  condition: ReturnCondition;
+  replacementSerials?: string[];
 }
 
 export interface CartItem extends SaleItem {

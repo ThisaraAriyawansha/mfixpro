@@ -26,10 +26,15 @@ const REFERENCE_TYPE_OPTIONS = [
   { value: "sale_cancel", label: "Sale Cancel" },
   { value: "batch_edit", label: "Batch Edit" },
   { value: "grn_edit", label: "GRN Edit" },
+  { value: "supplier_return", label: "Supplier Return" },
+  { value: "supplier_return_replacement", label: "Supplier Replacement" },
+  { value: "customer_return", label: "Customer Return" },
+  { value: "customer_return_replacement", label: "Customer Replacement" },
 ];
 
 function locationLabel(loc?: string) {
   if (!loc) return "—";
+  if (loc === "damaged") return "Damaged";
   return loc === "showroom" ? "Showroom" : "Stores";
 }
 

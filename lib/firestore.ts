@@ -10,7 +10,7 @@ import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
 import { db } from "./firebase";
 import { firebaseConfig } from "./firebase";
-import type { Service, ShopSettings, UserProfile,JobStatus, JobServiceItem, JobDevicePart,StockLocation, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
+import type { Service, ShopSettings, UserProfile,JobStatus, JobServiceItem, JobDevicePart,StockLocation, InventoryLocation, ReturnCondition, SupplierRefundMode, StockMovementReason, SupplierPaymentMethod, SupplierPaymentStatus, ShiftStatus, ShiftReviewStatus, ExpenseCategory, SalePaymentMethod, SalePaymentSplit, SalaryType, SalarySetup, SalaryPayment, SalaryCommissionItem } from "@/types";
 import { salePaymentSplits } from "@/types";
 import { diffFields, writeAuditLog } from "./audit";
 import { dateInputValue } from "./dates";
@@ -308,7 +308,7 @@ export async function getAllUnits(productId: string) {
 // Location filtered client-side (not via an extra `where`) so this keeps
 // using the existing status+createdAt composite index instead of needing a
 // new one provisioned in the Firebase console.
-export async function getAvailableUnits(productId: string, location?: StockLocation) {
+export async function getAvailableUnits(productId: string, location?: InventoryLocation) {
   const snap = await getDocs(
     query(
       collection(db, "products", productId, "units"),
@@ -669,7 +669,7 @@ function shiftTotalsField(method: SalePaymentMethod) {
 // (rather than an extra `where`) so no new composite index is needed.
 async function getCandidateBatchIds(
   productId: string,
-  location: StockLocation,
+  location: InventoryLocation,
   preferredBatchId?: string | null
 ): Promise<string[]> {
   const snap = await getDocs(query(collection(db, "products", productId, "batches"), orderBy("receivedAt", "asc")));
@@ -2796,6 +2796,730 @@ export async function adminUpdateStockOut(
   });
 }
 
+// ─── RETURNS (shared helpers) ─────────────────────────────────────────────────
+// Two flows, both two-step (create → settle):
+//  • Supplier Return (RTS-xxxxx): damaged stock leaves Showroom/Stores/the
+//    damaged pool and goes back to the supplier. Settled later as a refund
+//    (credit against what we owe, or cash back), a replacement (new stock at
+//    the same cost), or rejected (written off).
+//  • Customer Return (CR-xxxxx): items from a sale come back. Good ones go
+//    straight back into Showroom; damaged ones into the damaged pool (which
+//    only a Supplier Return can draw from). Settled later as a refund or a
+//    replacement unit from Showroom.
+
+// Product aggregate update for qty (+/-) at a location. The damaged pool is
+// kept out of totalStock so it never counts as sellable stock.
+function locationStockUpdate(location: InventoryLocation, qty: number): Record<string, any> {
+  if (location === "damaged") return { damagedStock: increment(qty) };
+  return {
+    totalStock: increment(qty),
+    [location === "showroom" ? "showroomStock" : "storesStock"]: increment(qty),
+    ...(qty > 0 ? { lowStockAlerted: false } : {}),
+  };
+}
+
+export function inventoryLocationLabel(loc?: string) {
+  if (loc === "showroom") return "Showroom";
+  if (loc === "damaged") return "Damaged";
+  return "Stores";
+}
+
+function cleanSerials(serials?: string[]) {
+  return Array.from(new Set((serials ?? []).map((s) => s.trim()).filter(Boolean)));
+}
+
+// ─── SUPPLIER RETURNS ─────────────────────────────────────────────────────────
+
+export interface ReturnLineInput {
+  productId: string;
+  productName: string;
+  sku: string;
+  qty: number;
+  serialNumbers?: string[];
+}
+
+export interface SupplierReturnData {
+  supplierId: string;
+  supplierName: string;
+  location: InventoryLocation;
+  note?: string;
+  createdById: string;
+  createdByName: string;
+  items: ReturnLineInput[];
+}
+
+export async function createSupplierReturn(data: SupplierReturnData): Promise<{ returnId: string; returnNo: string }> {
+  if (!data.supplierId) throw new Error("Choose a supplier.");
+  if (data.items.length === 0) throw new Error("Add at least one item.");
+  const isSerial = (item: ReturnLineInput) => !!item.serialNumbers && item.serialNumbers.length > 0;
+
+  const resolvedUnits: any[][] = await Promise.all(
+    data.items.map((item) => (isSerial(item) ? getUnitsBySerialNumbers(item.productId, item.serialNumbers!) : Promise.resolve([])))
+  );
+  // Serialized lines draw from the batches their units belong to; the rest FIFO.
+  const batchIds: string[][] = await Promise.all(
+    data.items.map((item, i) =>
+      isSerial(item)
+        ? Promise.resolve(Array.from(new Set(resolvedUnits[i].map((u) => u.batchId as string))))
+        : getCandidateBatchIds(item.productId, data.location)
+    )
+  );
+
+  return runTransaction(db, async (tx) => {
+    const counterRef = doc(db, "counters", "supplierReturn");
+    const supplierRef = doc(db, "suppliers", data.supplierId);
+    const [counterDoc, supplierSnap] = await Promise.all([tx.get(counterRef), tx.get(supplierRef)]);
+    if (!supplierSnap.exists()) throw new Error("Supplier no longer exists");
+
+    const batchSnaps: any[][] = await Promise.all(
+      data.items.map((item, i) => Promise.all(batchIds[i].map((id) => tx.get(doc(db, "products", item.productId, "batches", id)))))
+    );
+    const unitSnaps: any[][] = await Promise.all(
+      data.items.map((item, i) => Promise.all(resolvedUnits[i].map((u) => tx.get(doc(db, "products", item.productId, "units", u.id)))))
+    );
+
+    const allocations = data.items.map((item, i) => {
+      if (isSerial(item)) {
+        if (resolvedUnits[i].length !== item.serialNumbers!.length) {
+          throw new Error(`Some serial numbers for "${item.productName}" were not found.`);
+        }
+        unitSnaps[i].forEach((snap, j) => {
+          const u = snap.exists() ? (snap.data() as { status: string; location?: InventoryLocation }) : null;
+          if (!u || u.status !== "in_stock" || (u.location ?? "stores") !== data.location) {
+            throw new Error(`"${resolvedUnits[i][j].serialNumber}" is not available in ${inventoryLocationLabel(data.location)}.`);
+          }
+        });
+        const alloc = allocateFromUnits(batchIds[i], batchSnaps[i], resolvedUnits[i].map((u) => ({ unitId: u.id, batchId: u.batchId })));
+        // A unit's batch may have been deleted — only touch batches that exist.
+        const existing = new Set(batchIds[i].filter((_, k) => batchSnaps[i][k].exists()));
+        const unitCost = resolvedUnits[i].reduce((t, u) => t + (u.costPrice ?? 0), 0) / resolvedUnits[i].length;
+        return { consumed: alloc.consumed.filter((c) => existing.has(c.batchId)), costPrice: alloc.costPrice || unitCost };
+      }
+      if (!item.qty || item.qty <= 0) throw new Error(`Enter a quantity for "${item.productName}".`);
+      return allocateFifo(batchIds[i], batchSnaps[i], item.qty, item.productName);
+    });
+
+    const totalValue = data.items.reduce((t, item, i) => t + allocations[i].costPrice * item.qty, 0);
+
+    const current = counterDoc.exists() ? (counterDoc.data().value as number) : 0;
+    const next = current + 1;
+    tx.set(counterRef, { value: next });
+    const returnNo = `RTS-${String(next).padStart(5, "0")}`;
+
+    const returnRef = doc(collection(db, "supplierReturns"));
+    tx.set(returnRef, {
+      returnNo,
+      supplierId: data.supplierId,
+      supplierName: data.supplierName,
+      location: data.location,
+      totalValue,
+      status: "pending",
+      note: data.note ?? "",
+      createdById: data.createdById,
+      createdByName: data.createdByName,
+      createdAt: serverTimestamp(),
+    });
+
+    data.items.forEach((item, i) => {
+      const alloc = allocations[i];
+      tx.update(doc(db, "products", item.productId), locationStockUpdate(data.location, -item.qty));
+      for (const c of alloc.consumed) {
+        tx.update(doc(db, "products", item.productId, "batches", c.batchId), {
+          remainingQty: increment(-c.qty),
+          status: c.remainingAfter <= 0 ? "depleted" : "active",
+        });
+      }
+      for (const u of resolvedUnits[i]) {
+        tx.update(doc(db, "products", item.productId, "units", u.id), {
+          status: "returned_supplier",
+          supplierReturnId: returnRef.id,
+          returnedAt: serverTimestamp(),
+        });
+      }
+      tx.set(doc(collection(db, "supplierReturns", returnRef.id, "supplierReturnItems")), {
+        productId: item.productId,
+        productName: item.productName,
+        sku: item.sku,
+        qty: item.qty,
+        serialNumbers: item.serialNumbers ?? [],
+        costPrice: alloc.costPrice,
+        batchAllocations: alloc.consumed.map((c) => ({ batchId: c.batchId, qty: c.qty })),
+      });
+      tx.set(doc(collection(db, "stock_movements")), {
+        productId: item.productId,
+        type: "out",
+        qty: -item.qty,
+        referenceId: returnRef.id,
+        referenceType: "supplier_return",
+        note: `Returned to ${data.supplierName} via ${returnNo}`,
+        performedBy: data.createdById,
+        performedByName: data.createdByName,
+        location: data.location,
+        supplierName: data.supplierName,
+        createdAt: serverTimestamp(),
+      });
+    });
+
+    return { returnId: returnRef.id, returnNo };
+  });
+}
+
+export async function getSupplierReturns(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "supplierReturns"), ...createdAtRange(opts)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function getSupplierReturn(id: string) {
+  const snap = await getDoc(doc(db, "supplierReturns", id));
+  if (!snap.exists()) return null;
+  const items = await getDocs(collection(db, "supplierReturns", id, "supplierReturnItems"));
+  return { id: snap.id, ...snap.data(), items: items.docs.map((d) => ({ id: d.id, ...d.data() })) } as any;
+}
+
+export interface SupplierReturnSettlement {
+  type: "refund" | "replacement" | "rejected";
+  refundMode?: SupplierRefundMode;
+  refundAmount?: number;
+  replacementLocation?: StockLocation;
+  /** itemId → new serial numbers (serial-tracked products only) */
+  replacementSerials?: Record<string, string[]>;
+  note?: string;
+  performedBy: { uid: string; name: string };
+}
+
+export async function settleSupplierReturn(returnId: string, s: SupplierReturnSettlement) {
+  const itemsSnap = await getDocs(collection(db, "supplierReturns", returnId, "supplierReturnItems"));
+  const items = itemsSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+
+  return runTransaction(db, async (tx) => {
+    const returnRef = doc(db, "supplierReturns", returnId);
+    const returnSnap = await tx.get(returnRef);
+    if (!returnSnap.exists()) throw new Error("Return not found");
+    const ret = returnSnap.data() as any;
+    if (ret.status !== "pending") throw new Error(`${ret.returnNo} is already ${ret.status}.`);
+    const supplierRef = doc(db, "suppliers", ret.supplierId);
+    const supplierSnap = s.type === "refund" ? await tx.get(supplierRef) : null;
+
+    const settled: Record<string, any> = {
+      status: s.type === "rejected" ? "rejected" : "settled",
+      settlementType: s.type,
+      settlementNote: s.note ?? "",
+      settledById: s.performedBy.uid,
+      settledByName: s.performedBy.name,
+      settledAt: serverTimestamp(),
+    };
+
+    if (s.type === "refund") {
+      const amount = Number(s.refundAmount);
+      if (!amount || amount <= 0) throw new Error("Enter the refund amount.");
+      if (!supplierSnap!.exists()) throw new Error("Supplier no longer exists");
+      const sup = supplierSnap!.data() as { totalPayable?: number; amountPaid?: number };
+      const totalPayable = (sup.totalPayable ?? 0) - amount;
+      let amountPaid = sup.amountPaid ?? 0;
+      if (s.refundMode === "cash") {
+        // Cash back undoes part of what we already paid them.
+        if (amount > amountPaid) {
+          throw new Error(
+            `Only Rs. ${amountPaid.toLocaleString()} has been paid to this supplier — record the rest as a credit instead.`
+          );
+        }
+        amountPaid -= amount;
+      }
+      const balance = totalPayable - amountPaid;
+      tx.update(supplierRef, {
+        totalPayable,
+        amountPaid,
+        balance,
+        paymentStatus: computeSupplierPaymentStatus(totalPayable, balance),
+      });
+      Object.assign(settled, { refundMode: s.refundMode ?? "credit", refundAmount: amount });
+    }
+
+    if (s.type === "replacement") {
+      const location: StockLocation = s.replacementLocation ?? "stores";
+      for (const item of items) {
+        const serials = cleanSerials(s.replacementSerials?.[item.id]);
+        const isSerial = (item.serialNumbers?.length ?? 0) > 0;
+        if (isSerial && serials.length !== item.qty) {
+          throw new Error(`Enter ${item.qty} new serial number(s) for "${item.productName}".`);
+        }
+        const batchRef = doc(collection(db, "products", item.productId, "batches"));
+        tx.set(batchRef, {
+          costPrice: item.costPrice,
+          sellingPrice: null,
+          totalQty: item.qty,
+          remainingQty: item.qty,
+          supplierId: ret.supplierId,
+          note: `Replacement via ${ret.returnNo}`,
+          status: "active",
+          location,
+          receivedAt: serverTimestamp(),
+        });
+        for (const serialNumber of serials) {
+          tx.set(doc(collection(db, "products", item.productId, "units")), {
+            serialNumber,
+            batchId: batchRef.id,
+            costPrice: item.costPrice,
+            sellingPrice: null,
+            status: "in_stock",
+            location,
+            createdAt: serverTimestamp(),
+          });
+        }
+        tx.update(doc(db, "products", item.productId), locationStockUpdate(location, item.qty));
+        if (serials.length) tx.update(doc(db, "supplierReturns", returnId, "supplierReturnItems", item.id), { replacementSerials: serials });
+        tx.set(doc(collection(db, "stock_movements")), {
+          productId: item.productId,
+          type: "in",
+          qty: item.qty,
+          referenceId: returnId,
+          referenceType: "supplier_return_replacement",
+          note: `Replacement received for ${ret.returnNo}`,
+          performedBy: s.performedBy.uid,
+          performedByName: s.performedBy.name,
+          location,
+          supplierName: ret.supplierName,
+          createdAt: serverTimestamp(),
+        });
+      }
+      settled.replacementLocation = location;
+    }
+
+    tx.update(returnRef, settled);
+  });
+}
+
+// ─── CUSTOMER RETURNS ─────────────────────────────────────────────────────────
+
+// One row per product on the bill, with what's still returnable.
+export interface ReturnableLine {
+  productId: string;
+  productName: string;
+  sku: string;
+  soldQty: number;
+  returnedQty: number;
+  unitPrice: number; // what the customer actually paid per unit
+  costPrice: number;
+  serialNumbers: string[]; // sold serials not yet returned
+}
+
+function summarizeSaleForReturn(sale: any): ReturnableLine[] {
+  const returned: Record<string, number> = sale.returnedQty ?? {};
+  const returnedSerials = new Set<string>(sale.returnedSerials ?? []);
+  // Spread any bill-level discount across the lines so the refund suggestion
+  // matches what was really paid.
+  const lineSum = (sale.items as SaleItem[]).reduce((t, it) => t + (it.lineTotal || 0), 0);
+  const factor = lineSum > 0 && sale.discountAmount > 0 ? Math.max(0, (lineSum - sale.discountAmount) / lineSum) : 1;
+
+  const byProduct = new Map<string, ReturnableLine & { _value: number; _cost: number }>();
+  for (const it of sale.items as SaleItem[]) {
+    const row = byProduct.get(it.productId) ?? {
+      productId: it.productId, productName: it.productName, sku: it.sku,
+      soldQty: 0, returnedQty: returned[it.productId] ?? 0, unitPrice: 0, costPrice: 0, serialNumbers: [],
+      _value: 0, _cost: 0,
+    };
+    row.soldQty += it.qty;
+    row._value += (it.lineTotal || 0) * factor;
+    row._cost += (it.costPrice || 0) * it.qty;
+    for (const u of it.units ?? []) if (!returnedSerials.has(u.serialNumber)) row.serialNumbers.push(u.serialNumber);
+    byProduct.set(it.productId, row);
+  }
+  return Array.from(byProduct.values()).map(({ _value, _cost, ...r }) => ({
+    ...r,
+    unitPrice: r.soldQty ? Math.round((_value / r.soldQty) * 100) / 100 : 0,
+    costPrice: r.soldQty ? _cost / r.soldQty : 0,
+  }));
+}
+
+export async function findSaleForReturn(invoiceInput: string) {
+  const parsed = parseInvoiceNo(invoiceInput);
+  if (!parsed) throw new Error("Enter a valid invoice number, e.g. INV-00012.");
+  const snap = await getDocs(query(collection(db, "sales"), where("invoiceNo", "==", parsed.invoiceNo), limit(1)));
+  if (snap.empty) throw new Error(`${parsed.invoiceNo} was not found.`);
+  const sale = (await getSale(snap.docs[0].id)) as any;
+  if (sale.status === "cancelled") throw new Error(`${parsed.invoiceNo} is cancelled — nothing to return.`);
+  return { sale, lines: summarizeSaleForReturn(sale) };
+}
+
+export interface CustomerReturnLineInput {
+  productId: string;
+  qty: number;
+  serialNumbers?: string[];
+  condition: ReturnCondition;
+}
+
+export async function createCustomerReturn(data: {
+  saleId: string;
+  items: CustomerReturnLineInput[];
+  note?: string;
+  createdById: string;
+  createdByName: string;
+}): Promise<{ returnId: string; returnNo: string }> {
+  if (data.items.length === 0) throw new Error("Choose at least one item to return.");
+  const sale = (await getSale(data.saleId)) as any;
+  if (!sale) throw new Error("Bill not found");
+  const saleItems = sale.items as SaleItem[];
+
+  // Where each returned unit/qty came from, resolved outside the transaction
+  // (existence checks need plain reads, same as cancelSale).
+  const plans = await Promise.all(
+    data.items.map(async (input) => {
+      const lines = saleItems.filter((it) => it.productId === input.productId);
+      if (lines.length === 0) throw new Error("That product is not on this bill.");
+      const serials = cleanSerials(input.serialNumbers);
+      const soldUnits = lines.flatMap((l) => l.units ?? []);
+      const units = serials.map((sn) => {
+        const u = soldUnits.find((x) => x.serialNumber === sn);
+        if (!u) throw new Error(`Serial "${sn}" was not sold on this bill.`);
+        return u;
+      });
+      // A good, non-serial item goes back into a batch FIFO drew it from.
+      let restoreBatchId: string | null = null;
+      if (input.condition === "good" && units.length === 0) {
+        const candidates = lines.flatMap((l) => (l.batchAllocations ?? []).map((a) => a.batchId).concat(l.batchId ? [l.batchId] : []));
+        for (const id of candidates) {
+          const b = await getDoc(doc(db, "products", input.productId, "batches", id));
+          if (b.exists() && (b.data().location ?? "stores") === "showroom") { restoreBatchId = id; break; }
+        }
+      }
+      const unitBatchExists = new Map<string, boolean>();
+      if (input.condition === "good") {
+        for (const id of Array.from(new Set(units.map((u) => u.batchId)))) {
+          unitBatchExists.set(id, (await getDoc(doc(db, "products", input.productId, "batches", id))).exists());
+        }
+      }
+      return { input, lines, units, serials, restoreBatchId, unitBatchExists };
+    })
+  );
+  const summary = new Map(summarizeSaleForReturn(sale).map((l) => [l.productId, l]));
+
+  return runTransaction(db, async (tx) => {
+    const saleRef = doc(db, "sales", data.saleId);
+    const counterRef = doc(db, "counters", "customerReturn");
+    const [saleSnap, counterDoc] = await Promise.all([tx.get(saleRef), tx.get(counterRef)]);
+    if (!saleSnap.exists()) throw new Error("Bill not found");
+    const fresh = saleSnap.data() as any;
+    if (fresh.status === "cancelled") throw new Error("This bill has been cancelled.");
+    const alreadyReturned: Record<string, number> = fresh.returnedQty ?? {};
+    const alreadySerials = new Set<string>(fresh.returnedSerials ?? []);
+
+    // Validate quantities against what's still returnable, fresh from the server.
+    const qtyByProduct = new Map<string, number>();
+    for (const p of plans) {
+      const qty = p.serials.length > 0 ? p.serials.length : p.input.qty;
+      if (!qty || qty <= 0) throw new Error("Enter a quantity to return.");
+      p.input.qty = qty;
+      qtyByProduct.set(p.input.productId, (qtyByProduct.get(p.input.productId) ?? 0) + qty);
+      for (const sn of p.serials) if (alreadySerials.has(sn)) throw new Error(`"${sn}" has already been returned.`);
+    }
+    for (const [productId, qty] of Array.from(qtyByProduct.entries())) {
+      const line = summary.get(productId)!;
+      const left = line.soldQty - (alreadyReturned[productId] ?? 0);
+      if (qty > left) throw new Error(`Only ${left} of "${line.productName}" can still be returned from this bill.`);
+    }
+
+    const current = counterDoc.exists() ? (counterDoc.data().value as number) : 0;
+    const next = current + 1;
+    tx.set(counterRef, { value: next });
+    const returnNo = `CR-${String(next).padStart(5, "0")}`;
+    const returnRef = doc(collection(db, "customerReturns"));
+
+    let totalValue = 0;
+    const newSerials: string[] = [];
+
+    for (const p of plans) {
+      const { input } = p;
+      const line = summary.get(input.productId)!;
+      const qty = input.qty;
+      totalValue += line.unitPrice * qty;
+      newSerials.push(...p.serials);
+      const location: InventoryLocation = input.condition === "good" ? "showroom" : "damaged";
+      const productRef = doc(db, "products", input.productId);
+      tx.update(productRef, locationStockUpdate(location, qty));
+
+      // Batch the item lands in: the original one for good stock when it still
+      // exists, otherwise one fresh batch at the original cost (damaged items
+      // always get a fresh batch in the damaged pool).
+      const freshBatchRef = doc(collection(db, "products", input.productId, "batches"));
+      let freshQty = 0;
+      const restoreTo = new Map<string, number>(); // existing batchId → qty
+
+      if (p.units.length > 0) {
+        for (const u of p.units) {
+          const reuse = input.condition === "good" && p.unitBatchExists.get(u.batchId);
+          if (reuse) restoreTo.set(u.batchId, (restoreTo.get(u.batchId) ?? 0) + 1);
+          else freshQty++;
+          tx.update(doc(db, "products", input.productId, "units", u.unitId), {
+            status: "in_stock",
+            location,
+            batchId: reuse ? u.batchId : freshBatchRef.id,
+            saleId: null,
+            soldAt: null,
+            customerReturnId: returnRef.id,
+          });
+        }
+      } else if (p.restoreBatchId) {
+        restoreTo.set(p.restoreBatchId, qty);
+      } else {
+        freshQty = qty;
+      }
+
+      for (const [batchId, n] of Array.from(restoreTo.entries())) {
+        tx.update(doc(db, "products", input.productId, "batches", batchId), { remainingQty: increment(n), status: "active" });
+      }
+      if (freshQty > 0) {
+        tx.set(freshBatchRef, {
+          costPrice: line.costPrice,
+          sellingPrice: null,
+          totalQty: freshQty,
+          remainingQty: freshQty,
+          supplierId: null,
+          note: `${input.condition === "good" ? "Returned" : "Damaged return"} via ${returnNo} (${sale.invoiceNo})`,
+          status: "active",
+          location,
+          receivedAt: serverTimestamp(),
+        });
+      }
+
+      tx.set(doc(collection(db, "customerReturns", returnRef.id, "customerReturnItems")), {
+        productId: input.productId,
+        productName: line.productName,
+        sku: line.sku,
+        qty,
+        serialNumbers: p.serials,
+        unitPrice: line.unitPrice,
+        costPrice: line.costPrice,
+        condition: input.condition,
+      });
+      tx.set(doc(collection(db, "stock_movements")), {
+        productId: input.productId,
+        type: "in",
+        qty,
+        referenceId: returnRef.id,
+        referenceType: "customer_return",
+        note: `${input.condition === "good" ? "Returned" : "Damaged return"} from ${sale.invoiceNo} via ${returnNo}`,
+        performedBy: data.createdById,
+        performedByName: data.createdByName,
+        location,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    const saleUpdate: Record<string, any> = {
+      returnedSerials: [...Array.from(alreadySerials), ...newSerials],
+      hasReturns: true,
+    };
+    for (const [productId, qty] of Array.from(qtyByProduct.entries())) saleUpdate[`returnedQty.${productId}`] = increment(qty);
+    tx.update(saleRef, saleUpdate);
+
+    tx.set(returnRef, {
+      returnNo,
+      saleId: data.saleId,
+      invoiceNo: sale.invoiceNo,
+      customerId: sale.customerId ?? null,
+      customerName: sale.customerName || "Walk-in Customer",
+      customerPhone: sale.customerPhone ?? "",
+      totalValue: Math.round(totalValue * 100) / 100,
+      status: "pending",
+      note: data.note ?? "",
+      createdById: data.createdById,
+      createdByName: data.createdByName,
+      createdAt: serverTimestamp(),
+    });
+
+    return { returnId: returnRef.id, returnNo };
+  });
+}
+
+export async function getCustomerReturns(opts?: DateRange) {
+  const snap = await getDocs(query(collection(db, "customerReturns"), ...createdAtRange(opts)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function getCustomerReturn(id: string) {
+  const snap = await getDoc(doc(db, "customerReturns", id));
+  if (!snap.exists()) return null;
+  const items = await getDocs(collection(db, "customerReturns", id, "customerReturnItems"));
+  return { id: snap.id, ...snap.data(), items: items.docs.map((d) => ({ id: d.id, ...d.data() })) } as any;
+}
+
+export interface CustomerReturnSettlement {
+  type: "refund" | "replacement";
+  refundAmount?: number;
+  refundMethod?: SalePaymentMethod;
+  /** The settling user's open shift — a refund is taken out of its totals. */
+  shiftId?: string | null;
+  /** itemId → serials picked from Showroom (serial-tracked products only) */
+  replacementSerials?: Record<string, string[]>;
+  note?: string;
+  performedBy: { uid: string; name: string };
+}
+
+export async function settleCustomerReturn(returnId: string, s: CustomerReturnSettlement) {
+  const ret = await getCustomerReturn(returnId);
+  if (!ret) throw new Error("Return not found");
+  const items = ret.items as any[];
+  const warranties = (await getDocs(query(collection(db, "warranties"), where("saleId", "==", ret.saleId)))).docs;
+
+  // Replacement stock comes from Showroom: chosen serials, or FIFO otherwise.
+  const replacementUnits: any[][] = await Promise.all(
+    items.map((it) => {
+      const serials = cleanSerials(s.replacementSerials?.[it.id]);
+      return s.type === "replacement" && serials.length ? getUnitsBySerialNumbers(it.productId, serials) : Promise.resolve([]);
+    })
+  );
+  const batchIds: string[][] = await Promise.all(
+    items.map((it, i) => {
+      if (s.type !== "replacement") return Promise.resolve([]);
+      if ((it.serialNumbers?.length ?? 0) > 0) return Promise.resolve(Array.from(new Set(replacementUnits[i].map((u) => u.batchId as string))));
+      return getCandidateBatchIds(it.productId, "showroom");
+    })
+  );
+
+  return runTransaction(db, async (tx) => {
+    const returnRef = doc(db, "customerReturns", returnId);
+    const saleRef = doc(db, "sales", ret.saleId);
+    const [returnSnap, saleSnap] = await Promise.all([tx.get(returnRef), tx.get(saleRef)]);
+    if (!returnSnap.exists()) throw new Error("Return not found");
+    if (returnSnap.data().status !== "pending") throw new Error(`${ret.returnNo} is already ${returnSnap.data().status}.`);
+    if (!saleSnap.exists()) throw new Error("The original bill no longer exists.");
+    const sale = saleSnap.data() as any;
+
+    const settled: Record<string, any> = {
+      status: "settled",
+      settlementType: s.type,
+      settlementNote: s.note ?? "",
+      settledById: s.performedBy.uid,
+      settledByName: s.performedBy.name,
+      settledAt: serverTimestamp(),
+    };
+
+    if (s.type === "refund") {
+      const amount = Number(s.refundAmount);
+      const method: SalePaymentMethod = s.refundMethod ?? "cash";
+      if (!amount || amount <= 0) throw new Error("Enter the refund amount.");
+      if (amount > ret.totalValue) throw new Error(`Refund can't be more than the returned value (Rs. ${ret.totalValue.toLocaleString()}).`);
+
+      const shiftRef = s.shiftId ? doc(db, "shifts", s.shiftId) : null;
+      const shiftSnap = shiftRef ? await tx.get(shiftRef) : null;
+      const customerRef = sale.customerId ? doc(db, "customers", sale.customerId) : null;
+      const customerSnap = customerRef ? await tx.get(customerRef) : null;
+
+      tx.update(saleRef, { refundedAmount: increment(amount) });
+      tx.set(doc(db, "counters", "salesStats"), { totalRevenue: increment(-amount) }, { merge: true });
+
+      // Take the refunded items out of the Dashboard summary for the sale's day.
+      const soldAt: Date | undefined = sale.createdAt?.toDate?.();
+      if (soldAt) {
+        const byProduct: StatsNode = {};
+        let cogs = 0;
+        let qty = 0;
+        for (const it of items) {
+          const k = statsKey(it.productId, it.productName, "item");
+          byProduct[k] = { qty: -it.qty, revenue: -(it.unitPrice * it.qty), cost: -(it.costPrice * it.qty) };
+          cogs += it.costPrice * it.qty;
+          qty += it.qty;
+        }
+        applySaleStats(tx, statsDayKey(soldAt), {
+          revenue: -amount,
+          cogs: -cogs,
+          itemsSold: -qty,
+          byMethod: { [method]: -amount },
+          byProduct,
+          byStaff: { [statsKey(sale.cashierId, sale.cashierName, "staff")]: { revenue: -amount } },
+        });
+      }
+
+      // Money leaves the settling cashier's drawer / takings.
+      if (shiftSnap?.exists()) {
+        const sh = shiftSnap.data() as { status: string; cashierId: string };
+        if (sh.status === "open" && sh.cashierId === s.performedBy.uid) {
+          tx.update(shiftRef!, { [shiftTotalsField(method)]: increment(-amount) });
+        }
+      }
+
+      // Loyalty points earned on the refunded amount are taken back.
+      if (customerSnap?.exists()) {
+        const pts = Math.floor(amount / 100);
+        const have = customerSnap.data().loyaltyPoints ?? 0;
+        const take = Math.min(pts, Math.max(0, have));
+        if (take > 0) tx.update(customerRef!, { loyaltyPoints: increment(-take), updatedAt: serverTimestamp() });
+      }
+
+      // Warranties for refunded serials no longer apply.
+      const refunded = new Set(items.flatMap((it) => it.serialNumbers ?? []));
+      for (const w of warranties) if (w.data().serialNumber && refunded.has(w.data().serialNumber)) tx.delete(w.ref);
+
+      Object.assign(settled, { refundAmount: amount, refundMethod: method, shiftId: s.shiftId ?? null });
+    } else {
+      const batchSnaps: any[][] = await Promise.all(
+        items.map((it, i) => Promise.all(batchIds[i].map((id) => tx.get(doc(db, "products", it.productId, "batches", id)))))
+      );
+      const unitSnaps: any[][] = await Promise.all(
+        items.map((it, i) => Promise.all(replacementUnits[i].map((u) => tx.get(doc(db, "products", it.productId, "units", u.id)))))
+      );
+
+      const allocations = items.map((it, i) => {
+        const isSerial = (it.serialNumbers?.length ?? 0) > 0;
+        if (isSerial) {
+          const wanted = cleanSerials(s.replacementSerials?.[it.id]);
+          if (wanted.length !== it.qty || replacementUnits[i].length !== it.qty) {
+            throw new Error(`Pick ${it.qty} replacement serial number(s) for "${it.productName}".`);
+          }
+          unitSnaps[i].forEach((snap, j) => {
+            const u = snap.exists() ? snap.data() : null;
+            if (!u || u.status !== "in_stock" || (u.location ?? "stores") !== "showroom") {
+              throw new Error(`"${replacementUnits[i][j].serialNumber}" is not available in Showroom.`);
+            }
+          });
+          return allocateFromUnits(batchIds[i], batchSnaps[i], replacementUnits[i].map((u) => ({ unitId: u.id, batchId: u.batchId })));
+        }
+        return allocateFifo(batchIds[i], batchSnaps[i], it.qty, it.productName);
+      });
+
+      items.forEach((it, i) => {
+        tx.update(doc(db, "products", it.productId), locationStockUpdate("showroom", -it.qty));
+        for (const c of allocations[i].consumed) {
+          if (!batchSnaps[i][batchIds[i].indexOf(c.batchId)]?.exists()) continue;
+          tx.update(doc(db, "products", it.productId, "batches", c.batchId), {
+            remainingQty: increment(-c.qty),
+            status: c.remainingAfter <= 0 ? "depleted" : "active",
+          });
+        }
+        const newSerials = replacementUnits[i].map((u) => u.serialNumber as string);
+        for (const u of replacementUnits[i]) {
+          tx.update(doc(db, "products", it.productId, "units", u.id), {
+            status: "sold",
+            saleId: ret.saleId,
+            soldAt: serverTimestamp(),
+            replacementForReturnId: returnId,
+          });
+        }
+        // The warranty follows the item: point it at the replacement serial.
+        (it.serialNumbers ?? []).forEach((oldSn: string, k: number) => {
+          const w = warranties.find((x) => x.data().serialNumber === oldSn);
+          if (w && newSerials[k]) tx.update(w.ref, { serialNumber: newSerials[k], replacedSerial: oldSn });
+        });
+        if (newSerials.length) tx.update(doc(db, "customerReturns", returnId, "customerReturnItems", it.id), { replacementSerials: newSerials });
+        tx.set(doc(collection(db, "stock_movements")), {
+          productId: it.productId,
+          type: "out",
+          qty: -it.qty,
+          referenceId: returnId,
+          referenceType: "customer_return_replacement",
+          note: `Replacement given for ${ret.returnNo} (${ret.invoiceNo})`,
+          performedBy: s.performedBy.uid,
+          performedByName: s.performedBy.name,
+          location: "showroom",
+          createdAt: serverTimestamp(),
+        });
+      });
+    }
+
+    tx.update(returnRef, settled);
+  });
+}
+
 // ─── SUPPLIERS ────────────────────────────────────────────────────────────────
 
 export async function getSuppliers() {
@@ -3621,22 +4345,26 @@ export async function recalculateProductStock(): Promise<{
   const fixed: { name: string; before: string; after: string }[] = [];
 
   for (const productDoc of productsSnap.docs) {
-    const p = productDoc.data() as { name?: string; totalStock?: number; storesStock?: number; showroomStock?: number };
+    const p = productDoc.data() as { name?: string; totalStock?: number; storesStock?: number; showroomStock?: number; damagedStock?: number };
     const batchesSnap = await getDocs(collection(db, "products", productDoc.id, "batches"));
     if (batchesSnap.empty) continue;
 
     let stores = 0;
     let showroom = 0;
+    let damaged = 0;
     for (const b of batchesSnap.docs) {
-      const d = b.data() as { remainingQty?: number; location?: StockLocation };
+      const d = b.data() as { remainingQty?: number; location?: InventoryLocation };
       const qty = Math.max(0, d.remainingQty ?? 0);
-      if ((d.location ?? "stores") === "showroom") showroom += qty;
+      const loc = d.location ?? "stores";
+      if (loc === "showroom") showroom += qty;
+      else if (loc === "damaged") damaged += qty;
       else stores += qty;
     }
+    // Damaged stock is held apart and never counted as sellable stock.
     const total = stores + showroom;
 
-    if (p.totalStock !== total || p.storesStock !== stores || p.showroomStock !== showroom) {
-      await updateDoc(productDoc.ref, { totalStock: total, storesStock: stores, showroomStock: showroom });
+    if (p.totalStock !== total || p.storesStock !== stores || p.showroomStock !== showroom || (p.damagedStock ?? 0) !== damaged) {
+      await updateDoc(productDoc.ref, { totalStock: total, storesStock: stores, showroomStock: showroom, damagedStock: damaged });
       fixed.push({
         name: p.name ?? productDoc.id,
         before: `${p.totalStock ?? 0} (S ${p.storesStock ?? 0} / SR ${p.showroomStock ?? 0})`,
